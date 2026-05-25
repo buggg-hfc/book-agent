@@ -85,8 +85,15 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health"
 - `BOOK_AGENT_WARNING_THRESHOLD` / `BOOK_AGENT_FAIL_THRESHOLD`：审计阈值。
 - `BOOK_AGENT_CHECKPOINT_KEEP_RECENT`：章节滚动快照保留数量。
 - `BOOK_AGENT_QUEUE_MAX_WORKERS` / `BOOK_AGENT_QUEUE_POLL_INTERVAL_MS`：本地任务队列参数。
-- `BOOK_AGENT_LLM_PROVIDER`：`mock` 或 `openai_compatible`。
-- `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`：真实 Provider 参数。
+- `BOOK_AGENT_LLM_PROVIDER`：`mock`、`openai` 或 `openai_compatible`。
+- `BOOK_AGENT_LLM_API_KEY` / `OPENAI_API_KEY`：真实 Provider API key，接口不会返回该值。
+- `BOOK_AGENT_LLM_BASE_URL` / `OPENAI_BASE_URL`：OpenAI-compatible chat completions URL。
+- `BOOK_AGENT_LLM_MODEL` / `OPENAI_MODEL`：模型名。
+- `BOOK_AGENT_LLM_SYSTEM_PROMPT`：默认 system prompt。
+- `BOOK_AGENT_LLM_TEMPERATURE`：默认温度，默认 `0.4`。
+- `BOOK_AGENT_LLM_MAX_TOKENS`：默认最大输出 token，可留空。
+- `BOOK_AGENT_LLM_MAX_RETRIES`：LLM 调用失败重试次数，默认 `2`。
+- `BOOK_AGENT_LLM_PROMPT_TOKEN_COST` / `BOOK_AGENT_LLM_COMPLETION_TOKEN_COST`：每 1K token 成本估算。
 
 ## 使用方法
 
@@ -156,6 +163,38 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/projects/<project_id>/scan"
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/projects/<project_id>/align?q=主角%20线索"
 ```
 
+查看 LLM 配置：
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/llm/config"
+```
+
+直接调用文本生成：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/llm/generate" `
+  -ContentType "application/json" `
+  -Body '{"prompt":"为这本书生成一句宣传语","system_prompt":"只输出一句中文","temperature":0.3,"max_tokens":80}'
+```
+
+直接调用结构化输出：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/llm/structured" `
+  -ContentType "application/json" `
+  -Body '{"prompt":"输出审计状态 JSON","schema":{"required":["summary"],"defaults":{"summary":"ok"},"enums":{"status":["pass","warning","fail"]}}}'
+```
+
+环境变量变更后重新加载 LLM 配置：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/llm/reload"
+```
+
 ## 测试
 
 ```powershell
@@ -171,6 +210,7 @@ pytest -q
 - 事件日志重放和 dirty range 重建。
 - 后台任务暂停、继续、取消、重试和写锁。
 - 参数建议、结构化输出校验。
+- 后端 LLM 配置查询、直接文本调用、结构化调用和调用记录。
 - 全局扫描、长跨度对齐和 VolumeBridge。
 - Markdown、JSON、DOCX、PDF 导出。
 

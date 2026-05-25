@@ -20,6 +20,12 @@ class AppConfig:
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1/chat/completions"
     openai_model: str = "gpt-4o-mini"
+    llm_system_prompt: str = "你是一个严谨的长篇小说写作助手，输出必须可被后续审计和追踪。"
+    llm_temperature: float = 0.4
+    llm_max_tokens: int | None = None
+    llm_max_retries: int = 2
+    llm_prompt_token_cost: float = 0.0
+    llm_completion_token_cost: float = 0.0
     job_timeout_seconds: int = 120
 
     @classmethod
@@ -35,8 +41,24 @@ class AppConfig:
             queue_max_workers=int(os.getenv("BOOK_AGENT_QUEUE_MAX_WORKERS", "1")),
             queue_poll_interval_ms=int(os.getenv("BOOK_AGENT_QUEUE_POLL_INTERVAL_MS", "250")),
             llm_provider=os.getenv("BOOK_AGENT_LLM_PROVIDER", "mock"),
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            openai_api_key=os.getenv("BOOK_AGENT_LLM_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            openai_base_url=os.getenv(
+                "BOOK_AGENT_LLM_BASE_URL",
+                os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"),
+            ),
+            openai_model=os.getenv("BOOK_AGENT_LLM_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini")),
+            llm_system_prompt=os.getenv(
+                "BOOK_AGENT_LLM_SYSTEM_PROMPT",
+                "你是一个严谨的长篇小说写作助手，输出必须可被后续审计和追踪。",
+            ),
+            llm_temperature=float(os.getenv("BOOK_AGENT_LLM_TEMPERATURE", "0.4")),
+            llm_max_tokens=(
+                int(os.getenv("BOOK_AGENT_LLM_MAX_TOKENS"))
+                if os.getenv("BOOK_AGENT_LLM_MAX_TOKENS")
+                else None
+            ),
+            llm_max_retries=int(os.getenv("BOOK_AGENT_LLM_MAX_RETRIES", "2")),
+            llm_prompt_token_cost=float(os.getenv("BOOK_AGENT_LLM_PROMPT_TOKEN_COST", "0")),
+            llm_completion_token_cost=float(os.getenv("BOOK_AGENT_LLM_COMPLETION_TOKEN_COST", "0")),
             job_timeout_seconds=int(os.getenv("BOOK_AGENT_JOB_TIMEOUT_SECONDS", "120")),
         )

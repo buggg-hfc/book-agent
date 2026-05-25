@@ -99,6 +99,36 @@ def test_mock_llm_provider_records_calls():
     assert structured_record.output_hash
 
 
+def test_backend_llm_config_and_direct_calls(tmp_path):
+    service = BookAgentService(JsonStore(tmp_path))
+    project = service.create_project({"title": "LLM接口测试", "theme": "mystery"})
+
+    config = service.llm_config()
+    text_result = service.call_llm_text({
+        "project_id": project.id,
+        "prompt": "写一段测试文本",
+        "system_prompt": "只输出一句话",
+        "temperature": 0.2,
+        "max_tokens": 64,
+    })
+    structured_result = service.call_llm_structured({
+        "prompt": "输出结构化审计结果",
+        "schema": {
+            "required": ["summary"],
+            "defaults": {"summary": "ok"},
+            "enums": {"status": ["pass", "warning", "fail"]},
+        },
+    })
+    updated = service.get_project(project.id)
+
+    assert config["provider"] == "mock"
+    assert config["api_key_configured"] is False
+    assert text_result["text"]
+    assert text_result["record"]["provider"] == "mock"
+    assert structured_result["data"]["summary"]
+    assert updated.prompt_output_hashes
+
+
 def test_job_pause_cancel_retry_and_lock(tmp_path):
     service = BookAgentService(JsonStore(tmp_path))
     project = service.create_project({"title": "任务测试", "theme": "mystery"})

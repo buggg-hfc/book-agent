@@ -444,6 +444,44 @@ class BookAgentService:
         self.store.save_project(project)
         return {"filename": filename, "content_type": content_type, "content": content}
 
+    def llm_config(self) -> dict[str, Any]:
+        provider_name = getattr(self.provider, "name", self.config.llm_provider)
+        model = getattr(self.provider, "model", self.config.openai_model)
+        return {
+            "provider": provider_name,
+            "configured_provider": self.config.llm_provider,
+            "model": model,
+            "base_url": self.config.openai_base_url if provider_name != "mock" else None,
+            "api_key_configured": bool(self.config.openai_api_key),
+            "system_prompt": self.config.llm_system_prompt,
+            "temperature": self.config.llm_temperature,
+            "max_tokens": self.config.llm_max_tokens,
+            "timeout_seconds": self.config.job_timeout_seconds,
+            "max_retries": self.config.llm_max_retries,
+            "prompt_token_cost_per_1k": self.config.llm_prompt_token_cost,
+            "completion_token_cost_per_1k": self.config.llm_completion_token_cost,
+        }
+
+    def reload_llm_config(self) -> dict[str, Any]:
+        self.config = AppConfig.from_env()
+        self.provider = provider_from_config(self.config)
+        return self.llm_config()
+
+    def call_llm_text(self, payload: dict[str, Any]) -> dict[str, Any]:
+        prompt = self._require_prompt(payload)
+        text, record = self.provider.generate_text(prompt, **self._llm_options_from_payload(payload))
+        project_id = payload.get("project_id")
+        self._record_llm_call_for_project(project_id, None, record)
+        return {"text": text, "record": to_plain(record), "config": self.llm_config()}
+
+    def call_llm_structured(self, payload: dict[str, Any]) -> dict[str, Any]:
+        prompt = self._require_prompt(payload)
+        schema = payload.get("schema") if isinstance(payload.get("schema"), dict) else None
+        data, record = self.provider.generate_structured(prompt, schema, **self._llm_options_from_payload(payload))
+        project_id = payload.get("project_id")
+        self._record_llm_call_for_project(project_id, None, record)
+        return {"data": data, "record": to_plain(record), "config": self.llm_config()}
+
     def _audit_chapter(self, project: BookProject, chapter: Chapter) -> AuditReport:
         findings = self._universal_findings(chapter)
         table_patches = self._theme_table_patches(project, chapter)
@@ -528,6 +566,36 @@ class BookAgentService:
             getattr(record, "latency_ms", 0),
             getattr(record, "retry_count", 0),
         )
+
+    def _record_llm_call_for_project(self, project_id: object, chapter_no: int | None, record: Any) -> None:
+        if not isinstance(project_id, str) or not project_id:
+            self._log_llm_call("standalone", chapter_no, record)
+            return
+        project = self.store.load_project(project_id)
+        project.prompt_output_hashes.append(to_plain(record))
+        self._record_event(project, chapter_no, "llm_call_recorded", to_plain(record))
+        self.store.save_project(project)
+        self._log_llm_call(project_id, chapter_no, record)
+
+    @staticmethod
+    def _require_prompt(payload: dict[str, Any]) -> str:
+        prompt = str(payload.get("prompt", "")).strip()
+        if not prompt:
+            raise ValueError("prompt is required")
+        return prompt
+
+    @staticmethod
+    def _llm_options_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "system_prompt": payload.get("system_prompt"),
+            "temperature": None,
+            "max_tokens": None,
+        }
+        if payload.get("temperature") is not None:
+            options["temperature"] = float(payload["temperature"])
+        if payload.get("max_tokens") is not None:
+            options["max_tokens"] = int(payload["max_tokens"])
+        return options
 
     def _universal_findings(self, chapter: Chapter) -> list[AuditFinding]:
         findings = [

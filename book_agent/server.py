@@ -66,6 +66,14 @@ class Handler(BaseHTTPRequestHandler):
         parts = [part for part in path.split("/") if part]
         if method == "GET" and parts == ["api", "health"]:
             return {"ok": True}
+        if method == "GET" and parts == ["api", "llm", "config"]:
+            return {"config": SERVICE.llm_config()}
+        if method == "POST" and parts == ["api", "llm", "reload"]:
+            return {"config": SERVICE.reload_llm_config()}
+        if method == "POST" and parts == ["api", "llm", "generate"]:
+            return {"result": SERVICE.call_llm_text(self._read_json())}
+        if method == "POST" and parts == ["api", "llm", "structured"]:
+            return {"result": SERVICE.call_llm_structured(self._read_json())}
         if method == "GET" and parts == ["api", "projects"]:
             return {"projects": [self._project_summary(project) for project in SERVICE.list_projects()]}
         if method == "POST" and parts == ["api", "projects"]:
