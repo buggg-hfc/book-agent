@@ -2,7 +2,7 @@
 
 AI Book-Writing Agent 的本地 MVP，实现“创建项目 → 生成章节 → 审计 → 追踪表更新 → 快照 → 恢复”的最小闭环。
 
-当前版本不依赖外部 Python 包；默认使用 mock LLM Provider，也可以通过 OpenAI-compatible HTTP 接口接入真实模型。MVP 已覆盖章节生成、审计、快照恢复、事件重放、长跨度对齐、VolumeBridge 和多格式导出。
+后端不依赖外部 Python 包；默认使用 mock LLM Provider，也可以通过 OpenAI-compatible HTTP 接口接入真实模型。GUI 已重构为 React + Vite 工作台，生产构建产物由 Python 服务托管。
 
 ## 当前能力
 
@@ -12,7 +12,8 @@ AI Book-Writing Agent 的本地 MVP，实现“创建项目 → 生成章节 →
 - 自动更新题材追踪表。
 - 生成 pass/warning/fail 审计报告。
 - 每章保存滚动快照，并支持从快照恢复。
-- 本地 GUI 查看章节、审计报告、追踪表、快照。
+- 本地 GUI 提供三步创建向导、主流程按钮、章节阅读、审计、追踪表、快照和导出页。
+- 高级 GUI 区提供任务状态、全局扫描、VolumeBridge、快照管理和 LLM 配置查看。
 - 支持手动、弧、卷、应急快照；章节快照滚动保留，里程碑快照永久保留。
 - 支持恢复前差异摘要、四层恢复上下文和恢复风格验证。
 - 支持手动编辑 dirty range、摘要链/向量索引/追踪表/审计重建。
@@ -31,8 +32,12 @@ book_agent/
   memory.py          # 风格锚定、摘要链、长跨度对齐、VolumeBridge
   storage.py         # JSON 持久化
   server.py          # 标准库 HTTP 服务
+frontend/
+  src/               # React + Vite GUI 源码
+  package.json       # 前端依赖与构建脚本
 static/
-  index.html         # 本地 GUI
+  index.html         # 前端生产构建入口
+  assets/            # Vite 构建产物
 tests/
   test_mvp_flow.py   # MVP 流程测试
 book-agent-development-plan.md
@@ -42,12 +47,20 @@ book-agent-engineering-todo.md
 ## 环境要求
 
 - Python 3.11+
+- Node.js 20+（仅开发或重新构建 GUI 时需要）
 - Windows PowerShell、macOS Terminal 或 Linux shell
 
 当前 `pyproject.toml` 没有运行时依赖；测试需要 `pytest`。如果本机没有 pytest：
 
 ```powershell
 python -m pip install pytest
+```
+
+前端依赖安装：
+
+```powershell
+cd frontend
+npm install
 ```
 
 ## 启动
@@ -98,12 +111,10 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health"
 ## 使用方法
 
 1. 打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
-2. 在左侧填写书名、题材、篇幅和核心创意。
-3. 点击“创建”。
-4. 点击“生成一章”或“生成三章”。
-5. 在右侧查看章节、最新审计、追踪表和快照。
-6. 需要时执行修订、接受警告、人工处理、全局扫描、快照恢复或 VolumeBridge 确认。
-7. 使用导出按钮下载草稿或状态数据。
+2. 点击“创建新项目”，按三步向导填写基础信息、写作目标并确认。
+3. 点击“生成第一章”或“继续生成”。
+4. 在标签页中查看稿件、审计、追踪表、快照和导出。
+5. 普通写作流程只需要使用主按钮；任务、扫描、VolumeBridge 和 LLM 配置在“高级”标签页中。
 
 ## 常用 API
 
@@ -201,6 +212,14 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/llm/reload"
 pytest -q
 ```
 
+前端类型检查和生产构建：
+
+```powershell
+cd frontend
+npm run typecheck
+npm run build
+```
+
 当前测试覆盖：
 
 - 创建项目并连续生成 3 章。
@@ -213,6 +232,7 @@ pytest -q
 - 后端 LLM 配置查询、直接文本调用、结构化调用和调用记录。
 - 全局扫描、长跨度对齐和 VolumeBridge。
 - Markdown、JSON、DOCX、PDF 导出。
+- React GUI 类型检查、生产构建和浏览器冒烟验证。
 
 ## 本地数据
 

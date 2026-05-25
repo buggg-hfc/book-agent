@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 data/
 logs/
+node_modules/
+frontend/node_modules/
+frontend/dist/
