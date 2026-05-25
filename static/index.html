@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Book Agent MVP</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d7dce2;
+      --text: #20242a;
+      --muted: #667085;
+      --accent: #1f7a6d;
+      --accent-dark: #155c52;
+      --danger: #b42318;
+      --warn: #b54708;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 { font-size: 18px; margin: 0; font-weight: 650; }
+    main {
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      min-height: calc(100vh - 56px);
+    }
+    aside {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px;
+      overflow: auto;
+    }
+    section {
+      padding: 18px;
+      overflow: auto;
+    }
+    h2 { font-size: 15px; margin: 0 0 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px 10px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+    }
+    textarea { min-height: 76px; resize: vertical; }
+    button {
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      padding: 8px 11px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #fff;
+      color: var(--accent-dark);
+    }
+    button:disabled { opacity: .55; cursor: default; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { flex: 1; }
+    .project-list { display: grid; gap: 8px; margin-top: 16px; }
+    .project-button {
+      text-align: left;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 6px;
+    }
+    .project-button.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    .muted { color: var(--muted); font-size: 12px; }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr);
+      gap: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .chapter {
+      border-top: 1px solid var(--line);
+      padding: 12px 0;
+      white-space: pre-wrap;
+    }
+    .chapter:first-child { border-top: 0; padding-top: 0; }
+    .status-pass { color: var(--accent-dark); }
+    .status-warning { color: var(--warn); }
+    .status-fail { color: var(--danger); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 7px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; background: #fafafa; }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      max-height: 360px;
+      overflow: auto;
+    }
+    @media (max-width: 900px) {
+      main, .layout { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Book Agent MVP</h1>
+    <span class="muted" id="health">checking</span>
+  </header>
+  <main>
+    <aside>
+      <h2>创建项目</h2>
+      <label for="title">书名</label>
+      <input id="title" value="镜中之罪">
+      <label for="theme">题材</label>
+      <select id="theme">
+        <option value="mystery">推理</option>
+        <option value="sci_fi">科幻</option>
+        <option value="xuanhuan">玄幻</option>
+      </select>
+      <label for="scale">篇幅</label>
+      <select id="scale">
+        <option value="medium">中篇</option>
+        <option value="long">长篇</option>
+        <option value="epic">超长篇</option>
+      </select>
+      <label for="core">核心创意</label>
+      <textarea id="core">一个密室案件中，关键线索隐藏在证词的时间差里。</textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="create">创建</button>
+        <button id="suggest" class="secondary">建议</button>
+        <button id="refresh" class="secondary">刷新</button>
+      </div>
+      <div id="suggestions" class="muted" style="margin-top:10px"></div>
+      <div class="project-list" id="projects"></div>
+    </aside>
+    <section>
+      <div class="toolbar">
+        <button id="generate" disabled>生成一章</button>
+        <button id="demo" disabled>生成三章</button>
+        <button id="revise" class="secondary" disabled>修订</button>
+        <button id="accept-warning" class="secondary" disabled>接受警告</button>
+        <button id="manual-review" class="secondary" disabled>人工处理</button>
+        <button id="scan" class="secondary" disabled>全局扫描</button>
+        <button id="jobs-refresh" class="secondary">任务状态</button>
+        <button id="bridge" class="secondary" disabled>VolumeBridge</button>
+        <button id="confirm-bridge" class="secondary" disabled>确认桥接</button>
+        <button id="export-md" class="secondary" disabled>导出草稿</button>
+        <button id="export-audit" class="secondary" disabled>导出审计</button>
+        <button id="export-tracking" class="secondary" disabled>导出追踪表</button>
+        <button id="export-docx" class="secondary" disabled>导出DOCX</button>
+        <button id="export-pdf" class="secondary" disabled>导出PDF</button>
+        <button id="reload" class="secondary" disabled>重新载入</button>
+      </div>
+      <div class="layout">
+        <div>
+          <div class="panel">
+            <h2 id="project-title">未选择项目</h2>
+            <div class="muted" id="project-meta"></div>
+          </div>
+          <div class="panel">
+            <h2>章节</h2>
+            <div id="chapters" class="muted">暂无章节</div>
+          </div>
+        </div>
+        <div>
+          <div class="panel">
+            <h2>最新审计</h2>
+            <div id="audit" class="muted">暂无报告</div>
+          </div>
+          <div class="panel">
+            <h2>追踪表</h2>
+            <div id="tracking" class="muted">暂无数据</div>
+          </div>
+          <div class="panel">
+            <h2>快照</h2>
+            <div id="checkpoints" class="muted">暂无快照</div>
+          </div>
+          <div class="panel">
+            <h2>任务 / 扫描 / 桥接</h2>
+            <div id="ops" class="muted">暂无操作结果</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    let selectedId = null;
+    let selectedProject = null;
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      return data;
+    }
+
+    function statusClass(status) {
+      return status === 'pass' ? 'status-pass' : status === 'warning' ? 'status-warning' : 'status-fail';
+    }
+
+    async function loadProjects() {
+      const data = await api('/api/projects');
+      const el = document.querySelector('#projects');
+      el.innerHTML = '';
+      data.projects.forEach(project => {
+        const button = document.createElement('button');
+        button.className = 'project-button' + (project.id === selectedId ? ' active' : '');
+        button.innerHTML = `<strong>${project.title}</strong><br><span class="muted">${project.theme} · ${project.chapter_count}章 · ${project.latest_status || '未审计'}</span>`;
+        button.onclick = () => loadProject(project.id);
+        el.appendChild(button);
+      });
+    }
+
+    async function loadProject(id) {
+      selectedId = id;
+      const data = await api(`/api/projects/${id}`);
+      selectedProject = data.project;
+      renderProject();
+      await loadProjects();
+    }
+
+    function renderProject() {
+      const project = selectedProject;
+      const disabled = !project;
+      document.querySelector('#generate').disabled = disabled;
+      document.querySelector('#demo').disabled = disabled;
+      document.querySelector('#revise').disabled = disabled;
+      document.querySelector('#accept-warning').disabled = disabled;
+      document.querySelector('#manual-review').disabled = disabled;
+      document.querySelector('#scan').disabled = disabled;
+      document.querySelector('#bridge').disabled = disabled;
+      document.querySelector('#confirm-bridge').disabled = disabled;
+      document.querySelector('#reload').disabled = disabled;
+      document.querySelector('#export-md').disabled = disabled;
+      document.querySelector('#export-audit').disabled = disabled;
+      document.querySelector('#export-tracking').disabled = disabled;
+      document.querySelector('#export-docx').disabled = disabled;
+      document.querySelector('#export-pdf').disabled = disabled;
+      if (!project) return;
+      document.querySelector('#project-title').textContent = project.meta.title;
+      document.querySelector('#project-meta').textContent = `${project.meta.theme} · ${project.meta.scale} · ${project.creation_params.core_idea}`;
+      renderChapters(project);
+      renderAudit(project);
+      renderTracking(project);
+      renderCheckpoints(project);
+    }
+
+    function renderChapters(project) {
+      const el = document.querySelector('#chapters');
+      if (!project.chapters.length) {
+        el.textContent = '暂无章节';
+        return;
+      }
+      el.innerHTML = project.chapters.map(chapter => `
+        <div class="chapter">
+          <strong>${chapter.title}</strong>
+          <div class="muted">第 ${chapter.chapter_no} 章 · ${chapter.created_at}</div>
+          <div>${chapter.text}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderAudit(project) {
+      const el = document.querySelector('#audit');
+      const report = project.audit_reports.at(-1);
+      if (!report) {
+        el.textContent = '暂无报告';
+        return;
+      }
+      el.innerHTML = `
+        <div><strong class="${statusClass(report.overall_status)}">${report.overall_status}</strong> · score ${report.score.toFixed(2)} · ${report.decision}</div>
+        <table>
+          <thead><tr><th>状态</th><th>范围</th><th>规则</th><th>说明</th></tr></thead>
+          <tbody>${report.findings.map(f => `<tr><td class="${statusClass(f.status)}">${f.status}</td><td>${f.scope}</td><td>${f.rule}</td><td>${f.detail}</td></tr>`).join('')}</tbody>
+        </table>
+      `;
+    }
+
+    function renderTracking(project) {
+      const el = document.querySelector('#tracking');
+      const entries = Object.entries(project.theme_tracking_tables);
+      if (!entries.length) {
+        el.textContent = '暂无数据';
+        return;
+      }
+      el.innerHTML = entries.map(([tableId, rows]) => `
+        <details ${rows.length ? 'open' : ''}>
+          <summary>${tableId} (${rows.length})</summary>
+          <pre>${JSON.stringify(rows, null, 2)}</pre>
+        </details>
+      `).join('');
+    }
+
+    function renderCheckpoints(project) {
+      const el = document.querySelector('#checkpoints');
+      if (!project.checkpoints.length) {
+        el.textContent = '暂无快照';
+        return;
+      }
+      el.innerHTML = project.checkpoints.map(cp => `
+        <div class="row" style="margin-bottom:6px">
+          <span class="muted">${cp.type} · 第${cp.chapter_no || '-'}章 · ${cp.retention_policy}</span>
+          <button class="secondary" onclick="showRestoreDiff('${cp.id}')">差异</button>
+          <button class="secondary" onclick="restoreCheckpoint('${cp.id}')">恢复</button>
+        </div>
+      `).join('');
+    }
+
+    async function showRestoreDiff(id) {
+      const data = await api(`/api/projects/${selectedId}/restore_diff/${id}`);
+      document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.diff, null, 2)}</pre>`;
+    }
+
+    async function restoreCheckpoint(id) {
+      if (!selectedId) return;
+      const data = await api(`/api/projects/${selectedId}/restore/${id}`, { method: 'POST' });
+      selectedProject = data.project;
+      renderProject();
+      await loadProjects();
+    }
+
+    async function renderJobs() {
+      const data = await api('/api/jobs');
+      const rows = data.jobs.map(job => `
+        <tr>
+          <td>${job.type}</td>
+          <td>${job.status}</td>
+          <td>${job.current_step}</td>
+          <td>
+            <button class="secondary" onclick="jobAction('${job.id}', 'pause')">暂停</button>
+            <button class="secondary" onclick="jobAction('${job.id}', 'cancel')">取消</button>
+            <button class="secondary" onclick="jobAction('${job.id}', 'retry')">重试</button>
+          </td>
+        </tr>
+      `).join('');
+      document.querySelector('#ops').innerHTML = `
+        <table><thead><tr><th>类型</th><th>状态</th><th>步骤</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>
+      `;
+    }
+
+    async function jobAction(id, action) {
+      await api(`/api/jobs/${id}/${action}`, { method: 'POST' });
+      await renderJobs();
+    }
+    window.jobAction = jobAction;
+
+    document.querySelector('#create').onclick = async () => {
+      const payload = {
+        title: document.querySelector('#title').value,
+        theme: document.querySelector('#theme').value,
+        scale: document.querySelector('#scale').value,
+        core_idea: document.querySelector('#core').value
+      };
+      const data = await api('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+      await loadProject(data.project.id);
+    };
+    document.querySelector('#suggest').onclick = async () => {
+      const payload = {
+        theme: document.querySelector('#theme').value,
+        core_idea: document.querySelector('#core').value
+      };
+      const data = await api('/api/params/suggest', { method: 'POST', body: JSON.stringify(payload) });
+      document.querySelector('#suggestions').innerHTML = `<pre>${JSON.stringify(data.suggestions, null, 2)}</pre>`;
+    };
+    document.querySelector('#refresh').onclick = loadProjects;
+    document.querySelector('#reload').onclick = () => selectedId && loadProject(selectedId);
+    document.querySelector('#generate').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/chapters/generate`, { method: 'POST' });
+      selectedProject = data.project;
+      renderProject();
+      await loadProjects();
+    };
+    document.querySelector('#demo').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/chapters/demo?count=3`, { method: 'POST' });
+      selectedProject = data.project;
+      renderProject();
+      await loadProjects();
+    };
+    document.querySelector('#revise').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/revise`, { method: 'POST' });
+      selectedProject = data.project;
+      renderProject();
+      await loadProjects();
+    };
+    document.querySelector('#accept-warning').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/accept_warnings`, { method: 'POST' });
+      selectedProject = data.project;
+      renderProject();
+    };
+    document.querySelector('#manual-review').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/manual_review`, { method: 'POST' });
+      selectedProject = data.project;
+      renderProject();
+    };
+    document.querySelector('#scan').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/scan`);
+      document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.findings, null, 2)}</pre>`;
+    };
+    document.querySelector('#jobs-refresh').onclick = renderJobs;
+    document.querySelector('#bridge').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/volume_bridge`, { method: 'POST' });
+      document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.bridge, null, 2)}</pre>`;
+      await loadProject(selectedId);
+    };
+    document.querySelector('#confirm-bridge').onclick = async () => {
+      const data = await api(`/api/projects/${selectedId}/confirm_volume_bridge`, { method: 'POST' });
+      document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.bridge, null, 2)}</pre>`;
+      await loadProject(selectedId);
+    };
+    async function downloadExport(type) {
+      if (!selectedId) return;
+      const data = await api(`/api/projects/${selectedId}/export/${type}`);
+      const exported = data.export;
+      let content = exported.content;
+      if (['docx', 'pdf'].includes(type)) {
+        const binary = atob(content);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        content = bytes;
+      }
+      const blob = new Blob([content], { type: exported.content_type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = exported.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+    document.querySelector('#export-md').onclick = () => downloadExport('manuscript_md');
+    document.querySelector('#export-audit').onclick = () => downloadExport('audit_json');
+    document.querySelector('#export-tracking').onclick = () => downloadExport('tracking_json');
+    document.querySelector('#export-docx').onclick = () => downloadExport('docx');
+    document.querySelector('#export-pdf').onclick = () => downloadExport('pdf');
+
+    api('/api/health')
+      .then(() => document.querySelector('#health').textContent = 'ready')
+      .catch(() => document.querySelector('#health').textContent = 'offline');
+    loadProjects();
+  </script>
+</body>
+</html>
