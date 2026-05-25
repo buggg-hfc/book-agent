@@ -15,6 +15,53 @@ def new_id(prefix: str) -> str:
 
 
 @dataclass
+class CreationParams:
+    title: str
+    core_idea: str
+    target_audience: str
+    language_style: str
+    narrative_pov: str
+    tone: list[str]
+    special_requirements: str = ""
+    target_words: int | None = None
+    scale: Literal["micro", "short", "medium", "long", "epic"] = "medium"
+
+
+@dataclass
+class WorldSetting:
+    premise: str
+    era: str
+    locations: list[str]
+    rules: list[str]
+    forbidden_contradictions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Character:
+    id: str
+    name: str
+    role: str
+    status: Literal["active", "dead", "left", "sealed"] = "active"
+    knowledge: list[str] = field(default_factory=list)
+    voice_markers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PlotStructure:
+    type: str
+    current_stage: str
+    stages: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class ChapterOutline:
+    chapter_no: int
+    title: str
+    summary: str
+    target_words: int | None = None
+
+
+@dataclass
 class Chapter:
     id: str
     chapter_no: int
@@ -129,6 +176,8 @@ class Checkpoint:
     payload_path: str
     content_hash: str
     retention_policy: Literal["rolling", "permanent", "manual"]
+    schema_version: int = 1
+    style_anchor_hash: str | None = None
     restore_notes: str | None = None
 
 
@@ -158,6 +207,8 @@ class WritingJob:
     idempotency_key: str
     retry_count: int = 0
     error: str | None = None
+    failure_step: str | None = None
+    can_retry: bool = True
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
 
@@ -280,5 +331,8 @@ class BookProject:
     style_anchor: StyleAnchor | None = None
     style_calibration: StyleCalibrationProfile | None = None
     revision_history: list[dict[str, Any]] = field(default_factory=list)
+    manual_review_queue: list[dict[str, Any]] = field(default_factory=list)
+    dirty_ranges: list[tuple[int, int]] = field(default_factory=list)
+    prompt_output_hashes: list[dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)

@@ -212,6 +212,9 @@ class VolumeService:
     def ensure_volume_space(self, project: BookProject, volume_no: int = 1) -> VolumeMemorySpace:
         existing = next((item for item in project.volume_spaces if item.volume_no == volume_no), None)
         if existing:
+            existing.chapter_range = (existing.chapter_range[0], project.chapters[-1].chapter_no if project.chapters else existing.chapter_range[1])
+            existing.local_tracking_tables = project.theme_tracking_tables
+            existing.local_character_states = {char["id"]: char for char in project.characters}
             return existing
         end = project.chapters[-1].chapter_no if project.chapters else 0
         space = VolumeMemorySpace(
@@ -228,8 +231,15 @@ class VolumeService:
         return space
 
     def generate_bridge(self, project: BookProject, from_volume: int = 1, to_volume: int = 2) -> VolumeBridge:
+        space = self.ensure_volume_space(project, from_volume)
+        space.sealed = True
         removed = [char for char in project.characters if char.get("status") in {"dead", "left", "sealed"}]
         active = [char for char in project.characters if char.get("status") == "active"]
+        missing_checks = []
+        if not active:
+            missing_checks.append("桥接缺少活跃角色状态")
+        if project.foreshadowing_registry and not any(item.get("cross_volume") for item in project.foreshadowing_registry):
+            missing_checks.append("存在伏笔注册表，但无跨卷伏笔声明")
         bridge = VolumeBridge(
             from_volume=from_volume,
             to_volume=to_volume,
@@ -237,15 +247,15 @@ class VolumeService:
             volume_resolution=f"第{from_volume}卷已生成 {len(project.chapters)} 章。",
             active_characters=active,
             removed_characters=removed,
-            unresolved_threads=[],
+            unresolved_threads=[{"description": item.get("description"), "status": item.get("status")} for item in project.foreshadowing_registry if item.get("status") != "resolved"],
             cross_volume_foreshadows=[item for item in project.foreshadowing_registry if item.get("cross_volume")],
-            global_rule_updates=project.world_setting.get("rules", []),
+            global_rule_updates=[{"rule": rule, "source": "world_setting"} for rule in project.world_setting.get("rules", [])],
             item_transfers=[],
             relationship_changes=[],
             style_anchor_delta={},
-            forbidden_contradictions=[f"不得让已移除角色无解释回归：{c.get('name')}" for c in removed],
+            forbidden_contradictions=[f"不得让已移除角色无解释回归：{c.get('name')}" for c in removed] + missing_checks,
             next_volume_hooks=[project.outline[-1]["summary"]] if project.outline else [],
-            confirmed=project.meta.get("scale") != "epic",
+            confirmed=project.meta.get("scale") not in {"long", "epic"},
         )
         project.volume_bridges = [b for b in project.volume_bridges if not (b.from_volume == from_volume and b.to_volume == to_volume)]
         project.volume_bridges.append(bridge)

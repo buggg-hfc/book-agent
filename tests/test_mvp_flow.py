@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from book_agent.services import BookAgentService
 from book_agent.storage import JsonStore
-from book_agent.providers import MockLLMProvider
+from book_agent.providers import MockLLMProvider, validate_structured_output
 
 
 def test_create_project_and_generate_three_chapters(tmp_path):
@@ -129,6 +129,10 @@ def test_manual_edit_dirty_range_and_event_replay(tmp_path):
 
     assert any(event.event_type == "manual_edit" for event in edited.events)
     assert any(event.event_type == "dirty_range_rebuilt" for event in edited.events)
+    assert any(event.event_type == "summary_chain_rebuilt" for event in edited.events)
+    assert any(event.event_type == "vector_index_rebuilt" for event in edited.events)
+    assert edited.dirty_ranges == [(1, 2)]
+    assert len(replayed.chapters) == 2
     assert any(event.event_type == "events_replayed" for event in replayed.events)
 
 
@@ -168,3 +172,51 @@ def test_docx_pdf_and_volume_bridge_exports(tmp_path):
     assert pdf["filename"].endswith(".pdf")
     assert pdf["content_type"] == "application/pdf"
     assert "volume_resolution" in bridge["content"]
+
+
+def test_scale_boundaries_checkpoints_and_restore_context(tmp_path):
+    service = BookAgentService(JsonStore(tmp_path))
+
+    assert service.classify_scale_by_word_count(500_000) == "long"
+    assert service.classify_scale_by_word_count(999_999) == "long"
+    assert service.classify_scale_by_word_count(1_000_000) == "epic"
+
+    project = service.create_project({"title": "边界测试", "theme": "mystery", "target_words": 1_000_000})
+    project, _job = service.generate_chapter(project.id)
+    arc = service.create_arc_checkpoint(project.id)
+    emergency = service.create_emergency_checkpoint(project.id)
+    diff = service.restore_diff(project.id, arc.id)
+
+    assert project.meta["scale"] == "epic"
+    assert arc.retention_policy == "permanent"
+    assert emergency.retention_policy == "permanent"
+    assert arc.schema_version == 1
+    assert arc.style_anchor_hash
+    assert diff["schema_version"] == 1
+    assert "style_anchor_hash" in diff
+
+
+def test_structured_validation_defaults_and_enums():
+    data = {"status": "pass"}
+    validate_structured_output(data, {"required": ["summary"], "defaults": {"summary": "ok"}})
+    assert data["summary"] == "ok"
+
+    try:
+        validate_structured_output({"status": "unknown"})
+        raise AssertionError("expected invalid enum")
+    except ValueError:
+        pass
+
+
+def test_auto_revision_and_manual_review_queue(tmp_path):
+    service = BookAgentService(JsonStore(tmp_path), warning_threshold=0)
+    project = service.create_project({"title": "修订测试", "theme": "mystery"})
+    chapter = project.chapters
+    assert chapter == []
+
+    project, _job = service.generate_chapter(project.id)
+    marked = service.mark_latest_manual_review(project.id)
+    accepted = service.accept_latest_warnings(project.id)
+
+    assert marked.manual_review_queue
+    assert accepted.audit_reports[-1].decision == "continue"

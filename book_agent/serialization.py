@@ -49,6 +49,9 @@ def report_from_dict(data: dict[str, Any]) -> AuditReport:
 
 
 def checkpoint_from_dict(data: dict[str, Any]) -> Checkpoint:
+    data = dict(data)
+    data.setdefault("schema_version", 1)
+    data.setdefault("style_anchor_hash", None)
     return Checkpoint(**data)
 
 
@@ -83,6 +86,9 @@ def project_from_dict(data: dict[str, Any]) -> BookProject:
     data["summary_nodes"] = [summary_node_from_dict(item) for item in data.get("summary_nodes", [])]
     data["volume_spaces"] = [volume_space_from_dict(item) for item in data.get("volume_spaces", [])]
     data["volume_bridges"] = [volume_bridge_from_dict(item) for item in data.get("volume_bridges", [])]
+    data["dirty_ranges"] = [tuple(item) for item in data.get("dirty_ranges", [])]
+    data.setdefault("manual_review_queue", [])
+    data.setdefault("prompt_output_hashes", [])
     if data.get("style_anchor"):
         data["style_anchor"] = StyleAnchor(**data["style_anchor"])
     if data.get("style_calibration"):

@@ -56,4 +56,24 @@ class JsonStore:
         ).hexdigest()
         if expected != actual:
             raise ValueError(f"checkpoint hash mismatch: {checkpoint.id}")
+        return self.migrate_checkpoint_payload(payload)
+
+    @staticmethod
+    def migrate_checkpoint_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
+        payload.setdefault("schema_version", 1)
+        payload.setdefault("context_layers", {
+            "style_anchor": {},
+            "structural_summary": {},
+            "narrative_state": {},
+            "immediate_context": {},
+        })
+        project = payload.get("project")
+        if isinstance(project, dict):
+            project.setdefault("manual_review_queue", [])
+            project.setdefault("dirty_ranges", [])
+            project.setdefault("prompt_output_hashes", [])
+            for checkpoint in project.get("checkpoints", []):
+                checkpoint.setdefault("schema_version", 1)
+                checkpoint.setdefault("style_anchor_hash", None)
         return payload

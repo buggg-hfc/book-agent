@@ -151,15 +151,25 @@
       </select>
       <label for="scale">篇幅</label>
       <select id="scale">
+        <option value="">按目标字数自动</option>
+        <option value="micro">微型</option>
+        <option value="short">短篇</option>
         <option value="medium">中篇</option>
         <option value="long">长篇</option>
         <option value="epic">超长篇</option>
       </select>
+      <label for="target-words">目标字数</label>
+      <input id="target-words" type="number" min="0" step="10000" value="120000">
+      <label for="language-style">语言风格</label>
+      <input id="language-style" value="通俗流畅">
       <label for="core">核心创意</label>
       <textarea id="core">一个密室案件中，关键线索隐藏在证词的时间差里。</textarea>
+      <label for="requirements">特殊要求</label>
+      <textarea id="requirements">每章必须更新追踪表并保留可审计证据。</textarea>
       <div class="row" style="margin-top:10px">
         <button id="create">创建</button>
         <button id="suggest" class="secondary">建议</button>
+        <button id="refine" class="secondary">优化</button>
         <button id="refresh" class="secondary">刷新</button>
       </div>
       <div id="suggestions" class="muted" style="margin-top:10px"></div>
@@ -174,6 +184,10 @@
         <button id="manual-review" class="secondary" disabled>人工处理</button>
         <button id="scan" class="secondary" disabled>全局扫描</button>
         <button id="jobs-refresh" class="secondary">任务状态</button>
+        <button id="manual-checkpoint" class="secondary" disabled>手动快照</button>
+        <button id="arc-checkpoint" class="secondary" disabled>弧快照</button>
+        <button id="volume-checkpoint" class="secondary" disabled>卷快照</button>
+        <button id="emergency-checkpoint" class="secondary" disabled>应急快照</button>
         <button id="bridge" class="secondary" disabled>VolumeBridge</button>
         <button id="confirm-bridge" class="secondary" disabled>确认桥接</button>
         <button id="export-md" class="secondary" disabled>导出草稿</button>
@@ -181,6 +195,8 @@
         <button id="export-tracking" class="secondary" disabled>导出追踪表</button>
         <button id="export-docx" class="secondary" disabled>导出DOCX</button>
         <button id="export-pdf" class="secondary" disabled>导出PDF</button>
+        <button id="export-snapshot" class="secondary" disabled>导出快照</button>
+        <button id="export-bridge" class="secondary" disabled>导出桥接</button>
         <button id="reload" class="secondary" disabled>重新载入</button>
       </div>
       <div class="layout">
@@ -263,6 +279,10 @@
       document.querySelector('#accept-warning').disabled = disabled;
       document.querySelector('#manual-review').disabled = disabled;
       document.querySelector('#scan').disabled = disabled;
+      document.querySelector('#manual-checkpoint').disabled = disabled;
+      document.querySelector('#arc-checkpoint').disabled = disabled;
+      document.querySelector('#volume-checkpoint').disabled = disabled;
+      document.querySelector('#emergency-checkpoint').disabled = disabled;
       document.querySelector('#bridge').disabled = disabled;
       document.querySelector('#confirm-bridge').disabled = disabled;
       document.querySelector('#reload').disabled = disabled;
@@ -271,6 +291,8 @@
       document.querySelector('#export-tracking').disabled = disabled;
       document.querySelector('#export-docx').disabled = disabled;
       document.querySelector('#export-pdf').disabled = disabled;
+      document.querySelector('#export-snapshot').disabled = disabled;
+      document.querySelector('#export-bridge').disabled = disabled;
       if (!project) return;
       document.querySelector('#project-title').textContent = project.meta.title;
       document.querySelector('#project-meta').textContent = `${project.meta.theme} · ${project.meta.scale} · ${project.creation_params.core_idea}`;
@@ -336,6 +358,7 @@
         <div class="row" style="margin-bottom:6px">
           <span class="muted">${cp.type} · 第${cp.chapter_no || '-'}章 · ${cp.retention_policy}</span>
           <button class="secondary" onclick="showRestoreDiff('${cp.id}')">差异</button>
+          <button class="secondary" onclick="showRestoreValidation()">验证</button>
           <button class="secondary" onclick="restoreCheckpoint('${cp.id}')">恢复</button>
         </div>
       `).join('');
@@ -344,6 +367,11 @@
     async function showRestoreDiff(id) {
       const data = await api(`/api/projects/${selectedId}/restore_diff/${id}`);
       document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.diff, null, 2)}</pre>`;
+    }
+
+    async function showRestoreValidation() {
+      const data = await api(`/api/projects/${selectedId}/restore_validation`);
+      document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.validation, null, 2)}</pre>`;
     }
 
     async function restoreCheckpoint(id) {
@@ -363,6 +391,7 @@
           <td>${job.current_step}</td>
           <td>
             <button class="secondary" onclick="jobAction('${job.id}', 'pause')">暂停</button>
+            <button class="secondary" onclick="jobAction('${job.id}', 'resume')">继续</button>
             <button class="secondary" onclick="jobAction('${job.id}', 'cancel')">取消</button>
             <button class="secondary" onclick="jobAction('${job.id}', 'retry')">重试</button>
           </td>
@@ -378,13 +407,17 @@
       await renderJobs();
     }
     window.jobAction = jobAction;
+    window.showRestoreValidation = showRestoreValidation;
 
     document.querySelector('#create').onclick = async () => {
       const payload = {
         title: document.querySelector('#title').value,
         theme: document.querySelector('#theme').value,
         scale: document.querySelector('#scale').value,
-        core_idea: document.querySelector('#core').value
+        target_words: Number(document.querySelector('#target-words').value || 0),
+        language_style: document.querySelector('#language-style').value,
+        core_idea: document.querySelector('#core').value,
+        special_requirements: document.querySelector('#requirements').value
       };
       const data = await api('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
       await loadProject(data.project.id);
@@ -396,6 +429,11 @@
       };
       const data = await api('/api/params/suggest', { method: 'POST', body: JSON.stringify(payload) });
       document.querySelector('#suggestions').innerHTML = `<pre>${JSON.stringify(data.suggestions, null, 2)}</pre>`;
+    };
+    document.querySelector('#refine').onclick = async () => {
+      const data = await api('/api/params/refine', { method: 'POST', body: JSON.stringify({ text: document.querySelector('#core').value }) });
+      document.querySelector('#core').value = data.result.refined;
+      document.querySelector('#suggestions').innerHTML = `<pre>${JSON.stringify(data.result, null, 2)}</pre>`;
     };
     document.querySelector('#refresh').onclick = loadProjects;
     document.querySelector('#reload').onclick = () => selectedId && loadProject(selectedId);
@@ -432,6 +470,15 @@
       document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.findings, null, 2)}</pre>`;
     };
     document.querySelector('#jobs-refresh').onclick = renderJobs;
+    async function createCheckpoint(type) {
+      const data = await api(`/api/projects/${selectedId}/${type}_checkpoint`, { method: 'POST' });
+      document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.checkpoint, null, 2)}</pre>`;
+      await loadProject(selectedId);
+    }
+    document.querySelector('#manual-checkpoint').onclick = () => createCheckpoint('manual');
+    document.querySelector('#arc-checkpoint').onclick = () => createCheckpoint('arc');
+    document.querySelector('#volume-checkpoint').onclick = () => createCheckpoint('volume');
+    document.querySelector('#emergency-checkpoint').onclick = () => createCheckpoint('emergency');
     document.querySelector('#bridge').onclick = async () => {
       const data = await api(`/api/projects/${selectedId}/volume_bridge`, { method: 'POST' });
       document.querySelector('#ops').innerHTML = `<pre>${JSON.stringify(data.bridge, null, 2)}</pre>`;
@@ -468,6 +515,8 @@
     document.querySelector('#export-tracking').onclick = () => downloadExport('tracking_json');
     document.querySelector('#export-docx').onclick = () => downloadExport('docx');
     document.querySelector('#export-pdf').onclick = () => downloadExport('pdf');
+    document.querySelector('#export-snapshot').onclick = () => downloadExport('snapshot_json');
+    document.querySelector('#export-bridge').onclick = () => downloadExport('volume_bridge_json');
 
     api('/api/health')
       .then(() => document.querySelector('#health').textContent = 'ready')

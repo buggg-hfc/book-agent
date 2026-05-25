@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from uuid import uuid4
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -41,19 +42,24 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def _handle(self, method: str) -> None:
+        request_id = f"req_{uuid4().hex[:12]}"
         try:
             parsed = urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
+            SERVICE.logger.info("request request_id=%s method=%s path=%s", request_id, method, path)
             if path.startswith("/api"):
                 result = self._route_api(method, path, parse_qs(parsed.query))
                 self._send_json(result)
                 return
             self._serve_static(path)
         except ApiError as exc:
+            SERVICE.logger.info("request_failed request_id=%s status=%s error=%s", request_id, exc.status, exc.message)
             self._send_json({"error": exc.message}, status=exc.status)
         except KeyError as exc:
+            SERVICE.logger.info("request_failed request_id=%s status=%s error=%s", request_id, HTTPStatus.NOT_FOUND, exc)
             self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
         except Exception as exc:
+            SERVICE.logger.exception("request_failed request_id=%s status=%s", request_id, HTTPStatus.INTERNAL_SERVER_ERROR)
             self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _route_api(self, method: str, path: str, query: dict[str, list[str]]) -> object:
@@ -100,6 +106,8 @@ class Handler(BaseHTTPRequestHandler):
             return {"validation": to_plain(SERVICE.validate_restore(parts[2]))}
         if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "manual_checkpoint":
             return {"checkpoint": to_plain(SERVICE.create_manual_checkpoint(parts[2]))}
+        if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "arc_checkpoint":
+            return {"checkpoint": to_plain(SERVICE.create_arc_checkpoint(parts[2]))}
         if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "volume_checkpoint":
             return {"checkpoint": to_plain(SERVICE.create_volume_checkpoint(parts[2]))}
         if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "emergency_checkpoint":

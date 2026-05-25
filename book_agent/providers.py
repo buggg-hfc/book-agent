@@ -46,7 +46,7 @@ class MockLLMProvider:
     def generate_structured(self, prompt: str, schema: type | None = None) -> tuple[dict[str, Any], LLMCallRecord]:
         start = time.perf_counter()
         data = {"status": "pass", "summary": "mock structured output"}
-        validate_structured_output(data)
+        validate_structured_output(data, schema)
         return data, self._record(prompt, json.dumps(data, ensure_ascii=False), start, 0)
 
     def _record(self, prompt: str, output: str, start: float, retries: int) -> LLMCallRecord:
@@ -105,7 +105,7 @@ class OpenAICompatibleProvider:
             data = json.loads(text)
         except json.JSONDecodeError:
             data = {"raw_text": text, "status": "warning"}
-        validate_structured_output(data)
+        validate_structured_output(data, schema)
         return data, record
 
     def _record(self, prompt: str, output: str, start: float, retries: int) -> LLMCallRecord:
@@ -133,7 +133,15 @@ def provider_from_config(config) -> LLMProvider:
     return MockLLMProvider()
 
 
-def validate_structured_output(data: dict[str, Any]) -> None:
+def validate_structured_output(data: dict[str, Any], schema: Any | None = None) -> None:
     status = data.get("status")
     if status is not None and status not in {"pass", "warning", "fail"}:
         raise ValueError(f"invalid structured output status: {status}")
+    if isinstance(schema, dict):
+        for field in schema.get("required", []):
+            if field not in data:
+                data[field] = schema.get("defaults", {}).get(field)
+        enums = schema.get("enums", {})
+        for field, values in enums.items():
+            if field in data and data[field] not in values:
+                raise ValueError(f"invalid structured output enum for {field}: {data[field]}")
