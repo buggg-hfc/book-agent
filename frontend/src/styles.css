@@ -851,6 +851,20 @@ textarea {
   color: var(--muted);
 }
 
+.stream-text-preview {
+  max-height: 320px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #c5d6fa;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* LLM stats in job row */
 .llm-stats {
   display: block;

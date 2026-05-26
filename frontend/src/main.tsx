@@ -1267,6 +1267,19 @@ function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEven
   const stepLabel = latest?.step || "排队中";
   const llmRec = latest?.llm_record;
   const streamTokens = latest?.stream_tokens_out ?? 0;
+  const previewRef = React.useRef<HTMLDivElement>(null);
+
+  const streamText = React.useMemo(
+    () => events.filter((e) => e.event_type === "token" && e.detail).map((e) => e.detail).join(""),
+    [events]
+  );
+
+  React.useEffect(() => {
+    if (previewRef.current) {
+      previewRef.current.scrollTop = previewRef.current.scrollHeight;
+    }
+  }, [streamText]);
+
   return (
     <div className="stream-panel">
       <div className="stream-header">
@@ -1287,6 +1300,9 @@ function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEven
           已输出 {streamTokens} token…
         </div>
       ) : null}
+      {streamText && (
+        <div className="stream-text-preview" ref={previewRef}>{streamText}</div>
+      )}
     </div>
   );
 }
