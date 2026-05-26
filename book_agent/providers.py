@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .utils import stable_hash
+
+
+def strip_think_tags(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks from LLM output."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 @dataclass
@@ -34,6 +40,7 @@ class LLMProvider(Protocol):
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[str, LLMCallRecord]:
         ...
 
@@ -45,6 +52,7 @@ class LLMProvider(Protocol):
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[dict[str, Any], LLMCallRecord]:
         ...
 
@@ -60,6 +68,7 @@ class MockLLMProvider:
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[str, LLMCallRecord]:
         start = time.perf_counter()
         text = "这是 mock LLM 生成的可替换文本，用于本地验证工程流程。"
@@ -73,6 +82,7 @@ class MockLLMProvider:
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[dict[str, Any], LLMCallRecord]:
         start = time.perf_counter()
         data = {"status": "pass", "summary": "mock structured output"}
@@ -108,6 +118,7 @@ class OpenAICompatibleProvider:
         max_tokens: int | None = None,
         prompt_token_cost: float = 0.0,
         completion_token_cost: float = 0.0,
+        no_proxy: bool = False,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -119,6 +130,7 @@ class OpenAICompatibleProvider:
         self.max_tokens = max_tokens
         self.prompt_token_cost = prompt_token_cost
         self.completion_token_cost = completion_token_cost
+        self.no_proxy = no_proxy
 
     def generate_text(
         self,
@@ -127,6 +139,7 @@ class OpenAICompatibleProvider:
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[str, LLMCallRecord]:
         return self._chat_completion(
             prompt,
@@ -134,7 +147,14 @@ class OpenAICompatibleProvider:
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=False,
+            on_token=on_token,
         )
+
+    def _open_url(self, req: urllib.request.Request):
+        if self.no_proxy:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            return opener.open(req, timeout=self.timeout)
+        return urllib.request.urlopen(req, timeout=self.timeout)
 
     def _chat_completion(
         self,
@@ -144,6 +164,7 @@ class OpenAICompatibleProvider:
         temperature: float | None,
         max_tokens: int | None,
         json_mode: bool,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[str, LLMCallRecord]:
         start = time.perf_counter()
         retries = 0
@@ -156,6 +177,8 @@ class OpenAICompatibleProvider:
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature if temperature is None else temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
         effective_max_tokens = self.max_tokens if max_tokens is None else max_tokens
         if effective_max_tokens is not None:
@@ -171,10 +194,30 @@ class OpenAICompatibleProvider:
                     headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                    body = json.loads(response.read().decode("utf-8"))
-                text = body["choices"][0]["message"]["content"]
-                return text, self._record(prompt, text, start, retries, body.get("usage"))
+                chunks: list[str] = []
+                usage: dict[str, Any] | None = None
+                with self._open_url(req) as response:
+                    for raw_line in response:
+                        line = raw_line.decode("utf-8").rstrip("\n\r")
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk_obj = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        if chunk_obj.get("usage"):
+                            usage = chunk_obj["usage"]
+                        delta = (chunk_obj.get("choices") or [{}])[0].get("delta", {})
+                        token = delta.get("content") or ""
+                        if token:
+                            chunks.append(token)
+                            if on_token is not None:
+                                on_token(token)
+                text = strip_think_tags("".join(chunks))
+                return text, self._record(prompt, text, start, retries, usage)
             except (urllib.error.URLError, KeyError, TimeoutError) as exc:
                 if retries >= self.max_retries:
                     raise RuntimeError(f"LLM call failed after retries: {exc}") from exc
@@ -221,18 +264,27 @@ class OpenAICompatibleProvider:
 
 
 def provider_from_config(config) -> LLMProvider:
-    if config.llm_provider.lower() in {"openai", "openai_compatible"} and config.openai_api_key:
-        return OpenAICompatibleProvider(
-            api_key=config.openai_api_key,
-            model=config.openai_model,
-            base_url=config.openai_base_url,
-            timeout=config.job_timeout_seconds,
-            max_retries=config.llm_max_retries,
-            system_prompt=config.llm_system_prompt,
-            temperature=config.llm_temperature,
-            max_tokens=config.llm_max_tokens,
-            prompt_token_cost=config.llm_prompt_token_cost,
-            completion_token_cost=config.llm_completion_token_cost,
+    import warnings as _warnings
+    if config.llm_provider.lower() in {"openai", "openai_compatible"}:
+        if config.openai_api_key:
+            return OpenAICompatibleProvider(
+                api_key=config.openai_api_key,
+                model=config.openai_model,
+                base_url=config.openai_base_url,
+                timeout=config.job_timeout_seconds,
+                max_retries=config.llm_max_retries,
+                system_prompt=config.llm_system_prompt,
+                temperature=config.llm_temperature,
+                max_tokens=config.llm_max_tokens,
+                prompt_token_cost=config.llm_prompt_token_cost,
+                completion_token_cost=config.llm_completion_token_cost,
+                no_proxy=getattr(config, "llm_no_proxy", False),
+            )
+        _warnings.warn(
+            "BOOK_AGENT_LLM_PROVIDER is set to openai_compatible but no API key found. "
+            "Falling back to MockLLMProvider. Set BOOK_AGENT_LLM_API_KEY or OPENAI_API_KEY.",
+            RuntimeWarning,
+            stacklevel=2,
         )
     return MockLLMProvider()
 

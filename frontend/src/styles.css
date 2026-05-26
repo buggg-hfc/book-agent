@@ -698,6 +698,84 @@ textarea {
   border-color: #ffc9c2;
 }
 
+/* Project card with delete button */
+.project-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.project-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-delete-btn {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.project-card:hover .project-delete-btn {
+  opacity: 1;
+}
+
+/* SSE streaming progress panel */
+.stream-panel {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  background: #f0f5ff;
+  border: 1px solid #c5d6fa;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stream-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.stream-bar-wrap {
+  height: 6px;
+  background: #dde6f9;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.stream-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.stream-step {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stream-stats {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* LLM stats in job row */
+.llm-stats {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
