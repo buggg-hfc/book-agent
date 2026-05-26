@@ -162,8 +162,10 @@ class JobManager:
 
 class BookAgentService:
     def __init__(self, store: JsonStore | Path | str | None = None, warning_threshold: int | None = None) -> None:
-        self.config = AppConfig.from_env()
-        self.store = store if isinstance(store, JsonStore) else JsonStore(store or self.config.data_dir)
+        base_config = AppConfig.from_env()
+        self.store = store if isinstance(store, JsonStore) else JsonStore(store or base_config.data_dir)
+        file_settings = self.store.load_settings()
+        self.config = AppConfig.from_env_and_file(file_settings)
         self.jobs = JobManager()
         self.warning_threshold = warning_threshold if warning_threshold is not None else self.config.warning_threshold
         self.provider = provider_from_config(self.config)
@@ -560,9 +562,47 @@ class BookAgentService:
         }
 
     def reload_llm_config(self) -> dict[str, Any]:
-        self.config = AppConfig.from_env()
+        file_settings = self.store.load_settings()
+        self.config = AppConfig.from_env_and_file(file_settings)
         self.provider = provider_from_config(self.config)
         return self.llm_config()
+
+    def get_settings(self) -> dict[str, Any]:
+        """Return current effective settings with API key masked."""
+        saved = self.store.load_settings()
+        return {
+            "llm_provider": self.config.llm_provider,
+            "openai_api_key": "***" if self.config.openai_api_key else "",
+            "openai_api_key_set": bool(self.config.openai_api_key),
+            "openai_base_url": self.config.openai_base_url,
+            "openai_model": self.config.openai_model,
+            "llm_system_prompt": self.config.llm_system_prompt,
+            "llm_temperature": self.config.llm_temperature,
+            "llm_max_tokens": self.config.llm_max_tokens,
+            "llm_max_retries": self.config.llm_max_retries,
+            "llm_prompt_token_cost": self.config.llm_prompt_token_cost,
+            "llm_completion_token_cost": self.config.llm_completion_token_cost,
+            "llm_no_proxy": self.config.llm_no_proxy,
+            "_saved_fields": list(saved.keys()),
+        }
+
+    def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Save GUI settings to file, reload provider, return updated config."""
+        existing = self.store.load_settings()
+        allowed = AppConfig.SETTINGS_FIELDS
+        for key, value in payload.items():
+            if key not in allowed:
+                continue
+            if key == "openai_api_key" and value == "***":
+                continue
+            if key == "openai_api_key" and value == "" and "openai_api_key" in existing:
+                del existing["openai_api_key"]
+                continue
+            existing[key] = value
+        self.store.save_settings(existing)
+        self.config = AppConfig.from_env_and_file(existing)
+        self.provider = provider_from_config(self.config)
+        return self.get_settings()
 
     def call_llm_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         prompt = self._require_prompt(payload)

@@ -29,6 +29,46 @@ class AppConfig:
     llm_no_proxy: bool = False
     job_timeout_seconds: int = 120
 
+    # Fields that the GUI settings modal is allowed to override
+    SETTINGS_FIELDS = frozenset({
+        "llm_provider", "openai_api_key", "openai_base_url", "openai_model",
+        "llm_system_prompt", "llm_temperature", "llm_max_tokens",
+        "llm_max_retries", "llm_prompt_token_cost", "llm_completion_token_cost",
+        "llm_no_proxy",
+    })
+
+    @classmethod
+    def from_env_and_file(cls, file_settings: dict) -> "AppConfig":
+        """Build config from env vars, then overlay with GUI-saved settings."""
+        base = cls.from_env()
+        if not file_settings:
+            return base
+        kwargs = {
+            k: getattr(base, k)
+            for k in base.__dataclass_fields__  # type: ignore[attr-defined]
+        }
+        for key, value in file_settings.items():
+            if key not in cls.SETTINGS_FIELDS:
+                continue
+            if value is None or value == "":
+                if key == "openai_api_key":
+                    kwargs[key] = None
+                elif key == "llm_max_tokens":
+                    kwargs[key] = None
+            elif key == "llm_temperature":
+                kwargs[key] = float(value)
+            elif key in {"llm_max_retries"}:
+                kwargs[key] = int(value)
+            elif key in {"llm_max_tokens"}:
+                kwargs[key] = int(value)
+            elif key in {"llm_prompt_token_cost", "llm_completion_token_cost"}:
+                kwargs[key] = float(value)
+            elif key == "llm_no_proxy":
+                kwargs[key] = bool(value)
+            else:
+                kwargs[key] = value
+        return cls(**kwargs)
+
     @classmethod
     def from_env(cls) -> "AppConfig":
         return cls(

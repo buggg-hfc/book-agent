@@ -10,6 +10,8 @@ import {
   ClipboardCheck,
   Database,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   Gauge,
   History,
@@ -136,6 +138,22 @@ type LlmConfig = {
   timeout_seconds: number;
 };
 
+type AppSettings = {
+  llm_provider: string;
+  openai_api_key: string;
+  openai_api_key_set: boolean;
+  openai_base_url: string;
+  openai_model: string;
+  llm_system_prompt: string;
+  llm_temperature: number;
+  llm_max_tokens: number | null;
+  llm_max_retries: number;
+  llm_prompt_token_cost: number;
+  llm_completion_token_cost: number;
+  llm_no_proxy: boolean;
+  _saved_fields: string[];
+};
+
 type Toast = { tone: "success" | "warning" | "danger"; text: string };
 type TabKey = "manuscript" | "audit" | "tracking" | "snapshots" | "export" | "advanced";
 
@@ -192,6 +210,8 @@ function App() {
   const [streamingJobId, setStreamingJobId] = React.useState<string | null>(null);
   const [streamEvents, setStreamEvents] = React.useState<JobEvent[]>([]);
   const eventSourceRef = React.useRef<EventSource | null>(null);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [appSettings, setAppSettings] = React.useState<AppSettings | null>(null);
   const [form, setForm] = React.useState({
     title: "镜中之罪",
     theme: "mystery",
@@ -208,6 +228,7 @@ function App() {
   React.useEffect(() => {
     void refreshProjects();
     void loadLlmConfig();
+    void loadSettings();
   }, []);
 
   const notify = (next: Toast) => {
@@ -250,6 +271,27 @@ function App() {
       setLlmConfig(null);
     }
   }
+
+  async function loadSettings() {
+    try {
+      const data = await api<{ settings: AppSettings }>("/api/settings");
+      setAppSettings(data.settings);
+    } catch {
+      setAppSettings(null);
+    }
+  }
+
+  const saveSettings = async (payload: Partial<AppSettings>) => {
+    await withBusy("保存配置", async () => {
+      const data = await api<{ settings: AppSettings }>("/api/settings", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      setAppSettings(data.settings);
+      await loadLlmConfig();
+      notify({ tone: "success", text: "配置已保存并生效" });
+    });
+  };
 
   const createProject = async () => {
     await withBusy("创建项目", async () => {
@@ -550,6 +592,9 @@ function App() {
                 <Gauge size={15} /> {llmConfig.provider} · {llmConfig.model}{llmConfig.provider !== "mock" ? " · 流式" : ""}
               </span>
             )}
+            <button className="icon-button" title="配置" onClick={() => { void loadSettings(); setSettingsOpen(true); }}>
+              <Settings size={18} />
+            </button>
             {hasProject && (
               <>
                 <button className="secondary" onClick={() => void loadProject(selectedId || "")}>
@@ -668,6 +713,14 @@ function App() {
           onCreate={createProject}
           onSuggest={suggestParams}
           onRefine={refineIdea}
+        />
+      )}
+
+      {settingsOpen && appSettings && (
+        <SettingsModal
+          settings={appSettings}
+          onClose={() => setSettingsOpen(false)}
+          onSave={saveSettings}
         />
       )}
 
@@ -1029,6 +1082,178 @@ function ProjectWizard({
           ) : (
             <button className="primary" onClick={() => void onCreate()}><Check size={16} /> 创建</button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({
+  settings,
+  onClose,
+  onSave
+}: {
+  settings: AppSettings;
+  onClose: () => void;
+  onSave: (payload: Partial<AppSettings>) => Promise<void>;
+}) {
+  const [form, setForm] = React.useState({
+    llm_provider: settings.llm_provider,
+    openai_api_key: "",
+    openai_base_url: settings.openai_base_url,
+    openai_model: settings.openai_model,
+    llm_system_prompt: settings.llm_system_prompt,
+    llm_temperature: String(settings.llm_temperature),
+    llm_max_tokens: settings.llm_max_tokens != null ? String(settings.llm_max_tokens) : "",
+    llm_max_retries: String(settings.llm_max_retries),
+    llm_prompt_token_cost: String(settings.llm_prompt_token_cost),
+    llm_completion_token_cost: String(settings.llm_completion_token_cost),
+    llm_no_proxy: settings.llm_no_proxy,
+  });
+  const [showKey, setShowKey] = React.useState(false);
+
+  const upd = (key: keyof typeof form, value: string | boolean) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleSave = async () => {
+    const payload: Record<string, unknown> = {
+      llm_provider: form.llm_provider,
+      openai_base_url: form.openai_base_url,
+      openai_model: form.openai_model,
+      llm_system_prompt: form.llm_system_prompt,
+      llm_temperature: parseFloat(form.llm_temperature) || 0.4,
+      llm_max_tokens: form.llm_max_tokens ? parseInt(form.llm_max_tokens, 10) : null,
+      llm_max_retries: parseInt(form.llm_max_retries, 10) || 2,
+      llm_prompt_token_cost: parseFloat(form.llm_prompt_token_cost) || 0,
+      llm_completion_token_cost: parseFloat(form.llm_completion_token_cost) || 0,
+      llm_no_proxy: form.llm_no_proxy,
+    };
+    if (form.openai_api_key.trim()) {
+      payload.openai_api_key = form.openai_api_key.trim();
+    }
+    await onSave(payload as Partial<AppSettings>);
+    onClose();
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal modal-wide">
+        <div className="modal-head">
+          <div>
+            <h2>配置</h2>
+            <p>设置保存到本地文件，优先级高于环境变量</p>
+          </div>
+          <button className="icon-button" onClick={onClose}><XCircle size={18} /></button>
+        </div>
+
+        <div className="settings-grid">
+          <div className="settings-section">
+            <h3>LLM Provider</h3>
+            <label>Provider
+              <select value={form.llm_provider} onChange={(e) => upd("llm_provider", e.target.value)}>
+                <option value="openai_compatible">OpenAI Compatible</option>
+                <option value="mock">Mock（仅测试）</option>
+              </select>
+            </label>
+            <label>API Base URL
+              <input
+                value={form.openai_base_url}
+                onChange={(e) => upd("openai_base_url", e.target.value)}
+                placeholder="https://api.openai.com/v1/chat/completions"
+              />
+            </label>
+            <label>
+              API Key
+              {settings.openai_api_key_set && (
+                <span className="settings-hint">（当前已配置，留空保持不变，输入新值覆盖）</span>
+              )}
+              <div className="input-with-icon">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={form.openai_api_key}
+                  onChange={(e) => upd("openai_api_key", e.target.value)}
+                  placeholder={settings.openai_api_key_set ? "留空保持当前值" : "输入 API Key"}
+                  autoComplete="off"
+                />
+                <button className="icon-button input-eye" onClick={() => setShowKey((v) => !v)} type="button">
+                  {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </label>
+            <label>模型名称
+              <input
+                value={form.openai_model}
+                onChange={(e) => upd("openai_model", e.target.value)}
+                placeholder="gpt-4o-mini"
+              />
+            </label>
+          </div>
+
+          <div className="settings-section">
+            <h3>生成参数</h3>
+            <label>Temperature（0.0 – 1.0）
+              <input
+                type="number" min="0" max="1" step="0.05"
+                value={form.llm_temperature}
+                onChange={(e) => upd("llm_temperature", e.target.value)}
+              />
+            </label>
+            <label>最大输出 Token（留空不限制）
+              <input
+                type="number" min="1"
+                value={form.llm_max_tokens}
+                onChange={(e) => upd("llm_max_tokens", e.target.value)}
+                placeholder="留空不限制"
+              />
+            </label>
+            <label>失败重试次数
+              <input
+                type="number" min="0" max="10"
+                value={form.llm_max_retries}
+                onChange={(e) => upd("llm_max_retries", e.target.value)}
+              />
+            </label>
+            <label>输入 Token 费用（每 1K）
+              <input
+                type="number" min="0" step="0.0001"
+                value={form.llm_prompt_token_cost}
+                onChange={(e) => upd("llm_prompt_token_cost", e.target.value)}
+              />
+            </label>
+            <label>输出 Token 费用（每 1K）
+              <input
+                type="number" min="0" step="0.0001"
+                value={form.llm_completion_token_cost}
+                onChange={(e) => upd("llm_completion_token_cost", e.target.value)}
+              />
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={form.llm_no_proxy}
+                onChange={(e) => upd("llm_no_proxy", e.target.checked)}
+              />
+              禁用系统代理（no_proxy）
+            </label>
+          </div>
+
+          <div className="settings-section settings-section-wide">
+            <h3>System Prompt</h3>
+            <label>
+              <textarea
+                rows={5}
+                value={form.llm_system_prompt}
+                onChange={(e) => upd("llm_system_prompt", e.target.value)}
+                placeholder="你是一个严谨的长篇小说写作助手..."
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <div className="spacer" />
+          <button className="secondary" onClick={onClose}>取消</button>
+          <button className="primary" onClick={() => void handleSave()}><Check size={16} /> 保存</button>
         </div>
       </div>
     </div>
