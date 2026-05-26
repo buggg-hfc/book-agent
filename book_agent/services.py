@@ -280,11 +280,12 @@ class BookAgentService:
             self.jobs.publish_event(job.id, "step", "writing chapter", 0.2)
             chapter = self.engine.write_chapter(project, build_default_context(project))
 
-            _token_count = [0]
+            _char_count = [0]
 
             def _on_token(token: str) -> None:
-                _token_count[0] += 1
-                self.jobs.publish_event(job.id, "token", "generating", 0.3, detail=token, stream_tokens_out=_token_count[0])
+                _char_count[0] += len(token)
+                estimated_tokens = max(1, _char_count[0] // 4)
+                self.jobs.publish_event(job.id, "token", "generating", 0.3, detail=token, stream_tokens_out=estimated_tokens)
 
             llm_text, llm_record = self.provider.generate_text(
                 f"为《{project.meta.get('title')}》生成第{chapter_no}章，核心创意：{project.creation_params.get('core_idea')}",
