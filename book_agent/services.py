@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures as _futures
 import json
+import queue as _queue
+import threading as _threading
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +19,7 @@ from .models import (
     Chapter,
     ChapterEvent,
     Checkpoint,
+    JobEvent,
     RestoreValidationResult,
     TablePatch,
     VolumeBridge,
@@ -34,6 +38,9 @@ class JobManager:
     def __init__(self) -> None:
         self.jobs: dict[str, WritingJob] = {}
         self.project_write_locks: set[str] = set()
+        self._event_queues: dict[str, _queue.SimpleQueue] = {}
+        self._executor = _futures.ThreadPoolExecutor(max_workers=4)
+        self._futures: dict[str, _futures.Future] = {}
 
     def start(self, project_id: str, job_type: str, step: str, write: bool = True) -> WritingJob:
         if write and project_id in self.project_write_locks:
@@ -48,16 +55,53 @@ class JobManager:
             idempotency_key=new_id("idem"),
         )
         self.jobs[job.id] = job
+        self._event_queues[job.id] = _queue.SimpleQueue()
         if write:
             self.project_write_locks.add(project_id)
         return job
 
-    def complete(self, job: WritingJob, step: str = "completed") -> WritingJob:
+    def publish_event(
+        self,
+        job_id: str,
+        event_type: str,
+        step: str,
+        progress: float,
+        detail: str | None = None,
+        llm_record: dict[str, Any] | None = None,
+    ) -> None:
+        q = self._event_queues.get(job_id)
+        if q is not None:
+            q.put(JobEvent(
+                job_id=job_id,
+                event_type=event_type,
+                step=step,
+                progress=progress,
+                detail=detail,
+                llm_record=llm_record,
+            ))
+
+    def drain_events(self, job_id: str) -> list[JobEvent]:
+        q = self._event_queues.get(job_id)
+        events: list[JobEvent] = []
+        while q is not None:
+            try:
+                events.append(q.get_nowait())
+            except _queue.Empty:
+                break
+        return events
+
+    def submit(self, job_id: str, fn, *args: Any, **kwargs: Any) -> None:
+        self._futures[job_id] = self._executor.submit(fn, *args, **kwargs)
+
+    def complete(self, job: WritingJob, step: str = "completed", llm_record: Any = None) -> WritingJob:
         job.status = "completed"
         job.progress = 1.0
         job.current_step = step
         job.updated_at = utc_now()
+        if llm_record is not None:
+            job.last_llm_record = to_plain(llm_record) if hasattr(llm_record, "__dataclass_fields__") else llm_record
         self.project_write_locks.discard(job.project_id)
+        self.publish_event(job.id, "completed", step, 1.0, llm_record=job.last_llm_record)
         return job
 
     def fail(self, job: WritingJob, error: Exception) -> WritingJob:
@@ -67,6 +111,7 @@ class JobManager:
         job.can_retry = True
         job.updated_at = utc_now()
         self.project_write_locks.discard(job.project_id)
+        self.publish_event(job.id, "failed", job.current_step, job.progress, detail=str(error))
         return job
 
     def list(self) -> list[WritingJob]:
@@ -185,7 +230,21 @@ class BookAgentService:
         self.volume_service.ensure_volume_space(project)
         self._record_event(project, None, "project_created", {"title": title, "theme": theme})
         self.store.save_project(project)
+        # 创建初始快照（项目基线，永久保留）
+        checkpoint = self._save_checkpoint(project, "manual", None, "permanent")
+        checkpoint.restore_notes = "initial_snapshot"
+        project.checkpoints.append(checkpoint)
+        self._record_event(project, None, "checkpoint_created", {"checkpoint_id": checkpoint.id, "initial": True})
+        self.store.save_project(project)
         return project
+
+    def delete_project(self, project_id: str) -> None:
+        for job in list(self.jobs.jobs.values()):
+            if job.project_id == project_id and job.status in {"queued", "running", "paused"}:
+                self.jobs.cancel(job.id)
+        self.jobs.project_write_locks.discard(project_id)
+        self.store.delete_project(project_id)
+        self.logger.info("project_deleted project_id=%s", project_id)
 
     def list_projects(self) -> list[BookProject]:
         return self.store.list_projects()
@@ -193,17 +252,34 @@ class BookAgentService:
     def get_project(self, project_id: str) -> BookProject:
         return self.store.load_project(project_id)
 
-    def generate_chapter(self, project_id: str) -> tuple[BookProject, WritingJob]:
-        job = self.jobs.start(project_id, "generate_chapter", "loading project")
+    def start_generate_chapter(self, project_id: str) -> WritingJob:
+        """Start chapter generation in background thread and return the job immediately."""
+        job = self.jobs.start(project_id, "generate_chapter", "queued")
+        self.jobs.publish_event(job.id, "step", "queued", 0.0)
+        self.jobs.submit(job.id, self._generate_chapter_worker, project_id, job)
+        return job
+
+    def _generate_chapter_worker(self, project_id: str, job: WritingJob) -> None:
         self.logger.info("job_started job_id=%s project_id=%s type=%s", job.id, project_id, job.type)
+        llm_record = None
         try:
+            job.current_step = "loading project"
+            job.status = "running"
+            self.jobs.publish_event(job.id, "step", "loading project", 0.05)
             project = self.store.load_project(project_id)
             chapter_no = len(project.chapters) + 1
             job.current_step = "writing chapter"
+            self.jobs.publish_event(job.id, "step", "writing chapter", 0.2)
             chapter = self.engine.write_chapter(project, build_default_context(project))
+
+            def _on_token(token: str) -> None:
+                self.jobs.publish_event(job.id, "token", "generating", 0.3, detail=token)
+
             llm_text, llm_record = self.provider.generate_text(
-                f"为《{project.meta.get('title')}》生成第{chapter_no}章，核心创意：{project.creation_params.get('core_idea')}"
+                f"为《{project.meta.get('title')}》生成第{chapter_no}章，核心创意：{project.creation_params.get('core_idea')}",
+                on_token=_on_token,
             )
+            self.jobs.publish_event(job.id, "step", "llm_call_complete", 0.5, llm_record=to_plain(llm_record))
             if getattr(self.provider, "name", "mock") != "mock":
                 chapter.text = llm_text
             self._record_event(project, chapter_no, "llm_call_recorded", to_plain(llm_record))
@@ -213,15 +289,18 @@ class BookAgentService:
             self._record_event(project, chapter_no, "chapter_generated", {"chapter": to_plain(chapter)})
 
             job.current_step = "auditing chapter"
+            self.jobs.publish_event(job.id, "step", "auditing chapter", 0.65)
             report = self._audit_chapter(project, chapter)
             if report.decision == "revise":
                 job.current_step = "auto revising chapter"
+                self.jobs.publish_event(job.id, "step", "auto revising chapter", 0.75)
                 report = self._auto_revision_loop(project, chapter, report)
             chapter.audit_report_id = report.id
             project.audit_reports.append(report)
             self._record_event(project, chapter_no, "audit_completed", {"report": to_plain(report)})
 
             job.current_step = "saving checkpoint"
+            self.jobs.publish_event(job.id, "step", "saving checkpoint", 0.9)
             checkpoint = self._save_checkpoint(project, "chapter", chapter_no, "rolling")
             project.checkpoints.append(checkpoint)
             self._record_event(project, chapter_no, "checkpoint_created", {"checkpoint_id": checkpoint.id})
@@ -232,9 +311,8 @@ class BookAgentService:
             self.volume_service.ensure_volume_space(project)
             self._enforce_checkpoint_retention(project)
             self.store.save_project(project)
-            self.jobs.complete(job)
+            self.jobs.complete(job, llm_record=llm_record)
             self.logger.info("job_completed job_id=%s project_id=%s status=%s", job.id, project_id, job.status)
-            return project, job
         except Exception as exc:
             self.jobs.fail(job, exc)
             self.logger.info(
@@ -244,15 +322,30 @@ class BookAgentService:
                 job.failure_step,
                 job.error,
             )
-            raise
+
+    def generate_chapter(self, project_id: str) -> tuple[BookProject, WritingJob]:
+        """Synchronous wrapper: starts background job and blocks until completion. Used by tests."""
+        job = self.start_generate_chapter(project_id)
+        future = self.jobs._futures.get(job.id)
+        if future is not None:
+            future.result()  # blocks; re-raises worker exception
+        project = self.store.load_project(project_id)
+        return project, self.jobs.jobs[job.id]
+
+    def start_generate_demo(self, project_id: str, count: int = 3) -> list[WritingJob]:
+        """Start demo generation: chapters run sequentially (due to write lock), returns jobs list."""
+        jobs = []
+        for _ in range(count):
+            job = self.start_generate_chapter(project_id)
+            future = self.jobs._futures.get(job.id)
+            if future is not None:
+                future.result()  # wait for chapter to complete before starting next
+            jobs.append(self.jobs.jobs[job.id])
+        return jobs
 
     def generate_demo(self, project_id: str, count: int = 3) -> tuple[BookProject, list[WritingJob]]:
-        jobs = []
-        project = self.store.load_project(project_id)
-        for _ in range(count):
-            project, job = self.generate_chapter(project.id)
-            jobs.append(job)
-        return project, jobs
+        jobs = self.start_generate_demo(project_id, count)
+        return self.store.load_project(project_id), jobs
 
     def revise_latest_chapter(self, project_id: str) -> BookProject:
         project = self.store.load_project(project_id)

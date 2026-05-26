@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   Sparkles,
   Table2,
+  Trash2,
   Wand2,
   XCircle
 } from "lucide-react";
@@ -38,8 +39,29 @@ type ProjectSummary = {
   theme: string;
   scale: string;
   chapter_count: number;
+  checkpoint_count: number;
   latest_status: Status | null;
+  created_at: string;
   updated_at: string;
+};
+
+type LlmCallRecord = {
+  provider: string;
+  model: string;
+  prompt_tokens_estimate: number;
+  output_tokens_estimate: number;
+  cost_estimate: number;
+  latency_ms: number;
+  retry_count: number;
+};
+
+type JobEvent = {
+  job_id: string;
+  event_type: string;
+  step: string;
+  progress: number;
+  detail: string | null;
+  llm_record: LlmCallRecord | null;
 };
 
 type Chapter = {
@@ -89,6 +111,7 @@ type WritingJob = {
   current_step: string;
   error?: string | null;
   retry_count: number;
+  last_llm_record?: LlmCallRecord | null;
 };
 
 type Project = {
@@ -131,12 +154,12 @@ const scaleLabels: Record<string, string> = {
 };
 
 const tabs: Array<{ key: TabKey; label: string; icon: LucideIcon }> = [
-  { key: "manuscript", label: "稿件", icon: BookOpen },
+  { key: "manuscript", label: "章节稿件", icon: BookOpen },
   { key: "audit", label: "审计", icon: ClipboardCheck },
   { key: "tracking", label: "追踪表", icon: Table2 },
   { key: "snapshots", label: "快照", icon: History },
   { key: "export", label: "导出", icon: Download },
-  { key: "advanced", label: "高级", icon: Settings }
+  { key: "advanced", label: "高级工具", icon: Settings }
 ];
 
 const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -166,6 +189,8 @@ function App() {
   const [opsResult, setOpsResult] = React.useState<unknown>(null);
   const [jobs, setJobs] = React.useState<WritingJob[]>([]);
   const [llmConfig, setLlmConfig] = React.useState<LlmConfig | null>(null);
+  const [streamingJobId, setStreamingJobId] = React.useState<string | null>(null);
+  const [streamEvents, setStreamEvents] = React.useState<JobEvent[]>([]);
   const [form, setForm] = React.useState({
     title: "镜中之罪",
     theme: "mystery",
@@ -264,15 +289,68 @@ function App() {
     });
   };
 
-  const generateChapter = () =>
-    runProjectAction(
-      "生成章节",
-      `/api/projects/${selectedId}/chapters/generate`,
-      project?.chapters.length ? "新章节已生成" : "第一章已生成"
-    );
+  const generateChapter = async () => {
+    if (!selectedId) return;
+    try {
+      setBusy("启动生成任务...");
+      const data = await api<{ job_id: string; job: WritingJob }>(
+        `/api/projects/${selectedId}/chapters/generate`, { method: "POST" }
+      );
+      setBusy(null);
+      const jobId = data.job_id;
+      setStreamingJobId(jobId);
+      setStreamEvents([]);
+      const successMsg = project?.chapters.length ? "新章节已生成" : "第一章已生成";
+      const source = new EventSource(`/api/jobs/${jobId}/stream`);
+      source.onmessage = (e) => {
+        const evt: JobEvent = JSON.parse(e.data as string);
+        setStreamEvents((prev) => [...prev, evt]);
+        if (evt.event_type === "completed") {
+          source.close();
+          setStreamingJobId(null);
+          void loadProject(selectedId!);
+          void refreshProjectListOnly(selectedId!);
+          notify({ tone: "success", text: successMsg });
+        } else if (evt.event_type === "failed") {
+          source.close();
+          setStreamingJobId(null);
+          notify({ tone: "danger", text: evt.detail || "生成失败" });
+        }
+      };
+      source.onerror = () => {
+        source.close();
+        setStreamingJobId(null);
+        void loadProject(selectedId!);
+        notify({ tone: "warning", text: "进度连接中断，请刷新查看结果" });
+      };
+    } catch (err) {
+      setBusy(null);
+      notify({ tone: "danger", text: err instanceof Error ? err.message : String(err) });
+    }
+  };
 
-  const generateDemo = () =>
-    runProjectAction("生成三章", `/api/projects/${selectedId}/chapters/demo?count=3`, "三章示例已生成");
+  const generateDemo = async () => {
+    if (!selectedId) return;
+    await withBusy("生成示例章节（三章）...", async () => {
+      await api(`/api/projects/${selectedId}/chapters/demo?count=3`, { method: "POST" });
+      await loadProject(selectedId!);
+      await refreshProjectListOnly(selectedId!);
+      notify({ tone: "success", text: "三章示例已生成" });
+    });
+  };
+
+  const deleteProject = async (id: string, title: string) => {
+    if (!window.confirm(`确定要删除项目「${title}」吗？此操作不可撤销，所有快照和数据将被永久删除。`)) return;
+    await withBusy("删除项目", async () => {
+      await api(`/api/projects/${id}`, { method: "DELETE" });
+      if (selectedId === id) {
+        setSelectedId(null);
+        setProject(null);
+      }
+      await refreshProjectListOnly();
+      notify({ tone: "warning", text: `项目「${title}」已删除` });
+    });
+  };
 
   const suggestParams = async () => {
     await withBusy("生成建议", async () => {
@@ -416,18 +494,27 @@ function App() {
         </div>
         <div className="project-list">
           {projects.length === 0 ? (
-            <div className="empty-mini">还没有项目，先创建一本新书。</div>
+            <div className="empty-mini">暂无项目，点击上方「创建新项目」开始。</div>
           ) : (
             projects.map((item) => (
-              <button
+              <div
                 className={`project-card ${item.id === selectedId ? "active" : ""}`}
                 key={item.id}
                 onClick={() => void withBusy("载入项目", () => loadProject(item.id))}
               >
-                <strong>{item.title}</strong>
-                <span>{themeLabels[item.theme] || item.theme} · {item.chapter_count} 章</span>
-                {item.latest_status && <StatusBadge status={item.latest_status} />}
-              </button>
+                <div className="project-card-main">
+                  <strong>{item.title}</strong>
+                  <span>{themeLabels[item.theme] || item.theme} · {item.chapter_count} 章</span>
+                  {item.latest_status && <StatusBadge status={item.latest_status} />}
+                </div>
+                <button
+                  className="icon-button danger-text project-delete-btn"
+                  title={`删除「${item.title}」`}
+                  onClick={(e) => { e.stopPropagation(); void deleteProject(item.id, item.title); }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -446,7 +533,7 @@ function App() {
           <div className="topbar-actions">
             {llmConfig && (
               <span className="llm-pill" title="当前大模型配置">
-                <Gauge size={15} /> {llmConfig.provider} · {llmConfig.model}
+                <Gauge size={15} /> {llmConfig.provider} · {llmConfig.model}{llmConfig.provider !== "mock" ? " · 流式" : ""}
               </span>
             )}
             {hasProject && (
@@ -454,8 +541,13 @@ function App() {
                 <button className="secondary" onClick={() => void loadProject(selectedId || "")}>
                   <RefreshCw size={16} /> 重新载入
                 </button>
-                <button className="primary" onClick={() => void generateChapter()}>
-                  <Wand2 size={17} /> {project?.chapters.length ? "继续生成" : "生成第一章"}
+                <button
+                  className="primary"
+                  onClick={() => void generateChapter()}
+                  disabled={streamingJobId !== null}
+                >
+                  {streamingJobId ? <Loader2 size={17} className="spin" /> : <Wand2 size={17} />}
+                  {streamingJobId ? "生成中..." : project?.chapters.length ? "继续生成" : "生成第一章"}
                 </button>
               </>
             )}
@@ -488,15 +580,19 @@ function App() {
                   </>
                 )}
                 {latestReport?.overall_status === "fail" && (
-                  <button className="secondary danger-text" onClick={() => void runProjectAction("标记人工处理", `/api/projects/${selectedId}/manual_review`, "已进入人工处理")}>
-                    <ShieldAlert size={16} /> 人工处理
+                  <button className="secondary danger-text" onClick={() => void runProjectAction("标记人工审核", `/api/projects/${selectedId}/manual_review`, "已进入人工审核")}>
+                    <ShieldAlert size={16} /> 人工审核
                   </button>
                 )}
-                <button className="secondary" onClick={() => void generateDemo()}>
-                  <Sparkles size={16} /> 生成三章
+                <button className="secondary" onClick={() => void generateDemo()} disabled={streamingJobId !== null}>
+                  <Sparkles size={16} /> 生成示例章节
                 </button>
               </div>
             </section>
+
+            {streamingJobId && (
+              <StreamProgressPanel jobId={streamingJobId} events={streamEvents} />
+            )}
 
             <nav className="tabs">
               {tabs.map((tab) => {
@@ -510,7 +606,7 @@ function App() {
             </nav>
 
             <section className="content-panel">
-              {activeTab === "manuscript" && <ManuscriptPanel chapters={project.chapters} onGenerate={() => void generateChapter()} />}
+              {activeTab === "manuscript" && <ManuscriptPanel chapters={project.chapters} onGenerate={() => void generateChapter()} generating={streamingJobId !== null} />}
               {activeTab === "audit" && <AuditPanel report={latestReport} />}
               {activeTab === "tracking" && <TrackingPanel tables={project.theme_tracking_tables} />}
               {activeTab === "snapshots" && (
@@ -568,8 +664,9 @@ function App() {
 }
 
 function StatusBadge({ status }: { status: Status }) {
+  const label = status === "pass" ? "通过" : status === "warning" ? "警告" : status === "fail" ? "未通过" : status;
   const icon = status === "pass" ? <Check size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <XCircle size={14} />;
-  return <span className={`status-badge ${status}`}>{icon}{status}</span>;
+  return <span className={`status-badge ${status}`}>{icon}{label}</span>;
 }
 
 function Metric({
@@ -594,26 +691,40 @@ function Metric({
 
 function nextStepTitle(project: Project, report?: AuditReport) {
   if (!project.chapters.length) return "下一步：生成第一章";
-  if (report?.overall_status === "fail") return "需要处理阻塞问题";
-  if (report?.overall_status === "warning") return "审计有警告，可修订或确认继续";
+  if (report?.overall_status === "fail") return "存在需要处理的阻塞问题";
+  if (report?.overall_status === "warning") return "审计发现潜在问题，可修订后继续或接受并跳过";
   return "状态良好，可以继续写下一章";
 }
 
 function nextStepHint(project: Project, report?: AuditReport) {
   if (!project.chapters.length) return "生成后会自动执行审计、更新追踪表并保存快照。";
-  if (report?.overall_status === "fail") return "建议先修订或标记人工处理，再继续生成。";
+  if (report?.overall_status === "fail") return "建议先修订或标记人工审核，再继续生成。";
   if (report?.overall_status === "warning") return `发现 ${report.warning_count} 条警告，处理后再继续会更稳。`;
   return "当前章节已通过审计，系统已保存可恢复快照。";
 }
 
-function ManuscriptPanel({ chapters, onGenerate }: { chapters: Chapter[]; onGenerate: () => void }) {
+function jobStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    running: "运行中",
+    paused: "已暂停",
+    cancelled: "已取消",
+    failed: "失败",
+    completed: "已完成",
+  };
+  return labels[status] || status;
+}
+
+function ManuscriptPanel({ chapters, onGenerate, generating }: { chapters: Chapter[]; onGenerate: () => void; generating?: boolean }) {
   if (!chapters.length) {
     return (
       <div className="empty-state">
         <FileText size={34} />
-        <h3>还没有章节</h3>
-        <p>生成第一章后，这里会显示正文、章节编号和创建时间。</p>
-        <button className="primary" onClick={onGenerate}><Wand2 size={17} /> 生成第一章</button>
+        <h3>尚无章节内容</h3>
+        <p>点击"生成第一章"后，这里会显示正文、章节编号和创建时间。</p>
+        <button className="primary" onClick={onGenerate} disabled={generating}>
+          {generating ? <Loader2 size={17} className="spin" /> : <Wand2 size={17} />} 生成第一章
+        </button>
       </div>
     );
   }
@@ -634,7 +745,7 @@ function ManuscriptPanel({ chapters, onGenerate }: { chapters: Chapter[]; onGene
 }
 
 function AuditPanel({ report }: { report?: AuditReport }) {
-  if (!report) return <Empty icon={ClipboardCheck} title="暂无审计报告" text="生成章节后会自动执行通用审计和题材审计。" />;
+  if (!report) return <Empty icon={ClipboardCheck} title="尚未生成审计报告" text="生成章节后会自动执行通用审计和题材审计。" />;
   return (
     <div className="audit-panel">
       <div className="audit-summary">
@@ -699,7 +810,7 @@ function SnapshotPanel({
   onDiff: (id: string) => Promise<void>;
   onRestore: (id: string) => Promise<void>;
 }) {
-  if (!checkpoints.length) return <Empty icon={History} title="暂无快照" text="生成章节后会自动保存断点快照。" />;
+  if (!checkpoints.length) return <Empty icon={History} title="尚未保存快照" text="生成章节后会自动保存断点快照。" />;
   return (
     <div className="snapshot-list">
       {checkpoints.map((checkpoint) => (
@@ -772,7 +883,15 @@ function AdvancedPanel({
         </div>
         {jobs.length ? jobs.map((job) => (
           <div className="job-row" key={job.id}>
-            <div><strong>{job.type}</strong><span>{job.status} · {job.current_step}</span></div>
+            <div>
+              <strong>{job.type}</strong>
+              <span>{jobStatusLabel(job.status)} · {job.current_step}</span>
+              {job.last_llm_record && (
+                <span className="llm-stats">
+                  输入 {job.last_llm_record.prompt_tokens_estimate} / 输出 {job.last_llm_record.output_tokens_estimate} token · 耗时 {job.last_llm_record.latency_ms}ms{job.last_llm_record.cost_estimate > 0 ? ` · ¥${job.last_llm_record.cost_estimate.toFixed(4)}` : ""}
+                </span>
+              )}
+            </div>
             <div>
               <button className="icon-button" title="暂停" onClick={() => void onJobAction(job.id, "pause")}><Pause size={15} /></button>
               <button className="icon-button" title="继续" onClick={() => void onJobAction(job.id, "resume")}><Play size={15} /></button>
@@ -785,9 +904,9 @@ function AdvancedPanel({
         <h3>快照与桥接</h3>
         <div className="button-grid">
           <button className="secondary" onClick={() => void onCheckpoint("manual")}><Save size={16} /> 手动快照</button>
-          <button className="secondary" onClick={() => void onCheckpoint("arc")}><Save size={16} /> 弧快照</button>
-          <button className="secondary" onClick={() => void onCheckpoint("volume")}><Archive size={16} /> 卷快照</button>
-          <button className="secondary danger-text" onClick={() => void onCheckpoint("emergency")}><ShieldAlert size={16} /> 应急快照</button>
+          <button className="secondary" onClick={() => void onCheckpoint("arc")}><Save size={16} /> 情节弧快照</button>
+          <button className="secondary" onClick={() => void onCheckpoint("volume")}><Archive size={16} /> 分卷快照</button>
+          <button className="secondary danger-text" onClick={() => void onCheckpoint("emergency")}><ShieldAlert size={16} /> 紧急快照</button>
           <button className="secondary" onClick={() => void onVolumeBridge(false)}><Archive size={16} /> 生成桥接</button>
           <button className="secondary" onClick={() => void onVolumeBridge(true)}><Check size={16} /> 确认桥接</button>
         </div>
@@ -898,6 +1017,31 @@ function ProjectWizard({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEvent[] }) {
+  const latest = events[events.length - 1];
+  const progress = latest?.progress ?? 0;
+  const stepLabel = latest?.step || "排队中";
+  const llmRec = latest?.llm_record;
+  return (
+    <div className="stream-panel">
+      <div className="stream-header">
+        <Loader2 size={16} className="spin" />
+        <strong>生成中</strong>
+        <span className="muted">{jobId.slice(0, 12)}…</span>
+      </div>
+      <div className="stream-bar-wrap">
+        <div className="stream-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
+      </div>
+      <div className="stream-step">{stepLabel} · {Math.round(progress * 100)}%</div>
+      {llmRec && (
+        <div className="stream-stats">
+          输入 {llmRec.prompt_tokens_estimate} / 输出 {llmRec.output_tokens_estimate} token · 耗时 {llmRec.latency_ms}ms
+        </div>
+      )}
     </div>
   );
 }

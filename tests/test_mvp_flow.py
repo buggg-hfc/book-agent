@@ -170,7 +170,9 @@ def test_restore_diff_validation_scan_alignment_and_bridge(tmp_path):
     service = BookAgentService(JsonStore(tmp_path))
     project = service.create_project({"title": "长篇测试", "theme": "xuanhuan", "scale": "epic", "core_idea": "主角修炼"})
     project, _jobs = service.generate_demo(project.id, count=3)
-    checkpoint_id = project.checkpoints[0].id
+    # checkpoints[0] is the initial snapshot (0 chapters); use first chapter checkpoint
+    chapter_checkpoints = [c for c in project.checkpoints if c.type == "chapter"]
+    checkpoint_id = chapter_checkpoints[0].id
 
     diff = service.restore_diff(project.id, checkpoint_id)
     validation = service.validate_restore(project.id)

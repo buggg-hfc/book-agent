@@ -36,6 +36,20 @@ class JsonStore:
         tmp.write_text(json.dumps(to_plain(project), ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
 
+    def delete_project(self, project_id: str) -> None:
+        path = self.projects_dir / f"{project_id}.json"
+        if not path.exists():
+            return
+        try:
+            project = self.load_project(project_id)
+            for checkpoint in project.checkpoints:
+                cp_path = Path(checkpoint.payload_path)
+                if cp_path.exists():
+                    cp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        path.unlink(missing_ok=True)
+
     def save_checkpoint_payload(self, checkpoint_id: str, payload: dict[str, Any]) -> tuple[str, str]:
         plain = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
         content_hash = hashlib.sha256(plain.encode("utf-8")).hexdigest()

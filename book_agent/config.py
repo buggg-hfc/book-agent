@@ -16,7 +16,7 @@ class AppConfig:
     checkpoint_keep_recent: int = 5
     queue_max_workers: int = 1
     queue_poll_interval_ms: int = 250
-    llm_provider: str = "mock"
+    llm_provider: str = "openai_compatible"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1/chat/completions"
     openai_model: str = "gpt-4o-mini"
@@ -26,6 +26,7 @@ class AppConfig:
     llm_max_retries: int = 2
     llm_prompt_token_cost: float = 0.0
     llm_completion_token_cost: float = 0.0
+    llm_no_proxy: bool = False
     job_timeout_seconds: int = 120
 
     @classmethod
@@ -40,7 +41,7 @@ class AppConfig:
             checkpoint_keep_recent=int(os.getenv("BOOK_AGENT_CHECKPOINT_KEEP_RECENT", "5")),
             queue_max_workers=int(os.getenv("BOOK_AGENT_QUEUE_MAX_WORKERS", "1")),
             queue_poll_interval_ms=int(os.getenv("BOOK_AGENT_QUEUE_POLL_INTERVAL_MS", "250")),
-            llm_provider=os.getenv("BOOK_AGENT_LLM_PROVIDER", "mock"),
+            llm_provider=os.getenv("BOOK_AGENT_LLM_PROVIDER", "openai_compatible"),
             openai_api_key=os.getenv("BOOK_AGENT_LLM_API_KEY") or os.getenv("OPENAI_API_KEY"),
             openai_base_url=os.getenv(
                 "BOOK_AGENT_LLM_BASE_URL",
@@ -60,5 +61,6 @@ class AppConfig:
             llm_max_retries=int(os.getenv("BOOK_AGENT_LLM_MAX_RETRIES", "2")),
             llm_prompt_token_cost=float(os.getenv("BOOK_AGENT_LLM_PROMPT_TOKEN_COST", "0")),
             llm_completion_token_cost=float(os.getenv("BOOK_AGENT_LLM_COMPLETION_TOKEN_COST", "0")),
+            llm_no_proxy=os.getenv("BOOK_AGENT_LLM_NO_PROXY", "").lower() in {"1", "true", "yes"},
             job_timeout_seconds=int(os.getenv("BOOK_AGENT_JOB_TIMEOUT_SECONDS", "120")),
         )

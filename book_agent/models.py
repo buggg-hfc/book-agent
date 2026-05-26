@@ -209,8 +209,19 @@ class WritingJob:
     error: str | None = None
     failure_step: str | None = None
     can_retry: bool = True
+    last_llm_record: dict[str, Any] | None = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+
+
+@dataclass
+class JobEvent:
+    job_id: str
+    event_type: str  # "step" | "completed" | "failed"
+    step: str
+    progress: float
+    detail: str | None = None
+    llm_record: dict[str, Any] | None = None
 
 
 @dataclass

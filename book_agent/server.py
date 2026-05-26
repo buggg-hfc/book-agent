@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import time as _time
 from uuid import uuid4
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +34,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._handle("POST")
 
+    def do_DELETE(self) -> None:
+        self._handle("DELETE")
+
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
         self._send_common_headers()
@@ -48,6 +52,11 @@ class Handler(BaseHTTPRequestHandler):
             path = parsed.path.rstrip("/") or "/"
             SERVICE.logger.info("request request_id=%s method=%s path=%s", request_id, method, path)
             if path.startswith("/api"):
+                # SSE route: bypass JSON routing and response wrapping
+                parts = [p for p in path.split("/") if p]
+                if method == "GET" and len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stream":
+                    self._handle_sse(parts[2])
+                    return
                 result = self._route_api(method, path, parse_qs(parsed.query))
                 self._send_json(result)
                 return
@@ -61,6 +70,32 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             SERVICE.logger.exception("request_failed request_id=%s status=%s", request_id, HTTPStatus.INTERNAL_SERVER_ERROR)
             self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_sse(self, job_id: str) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        deadline = _time.monotonic() + SERVICE.config.job_timeout_seconds + 30
+        while _time.monotonic() < deadline:
+            events = SERVICE.jobs.drain_events(job_id)
+            for evt in events:
+                data = json.dumps(to_plain(evt), ensure_ascii=False)
+                try:
+                    self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                if evt.event_type in {"completed", "failed"}:
+                    return
+            try:
+                self.wfile.write(b": heartbeat\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            _time.sleep(0.25)
 
     def _route_api(self, method: str, path: str, query: dict[str, list[str]]) -> object:
         parts = [part for part in path.split("/") if part]
@@ -78,6 +113,9 @@ class Handler(BaseHTTPRequestHandler):
             return {"projects": [self._project_summary(project) for project in SERVICE.list_projects()]}
         if method == "POST" and parts == ["api", "projects"]:
             return {"project": to_plain(SERVICE.create_project(self._read_json()))}
+        if method == "DELETE" and len(parts) == 3 and parts[:2] == ["api", "projects"]:
+            SERVICE.delete_project(parts[2])
+            return {"ok": True, "project_id": parts[2]}
         if method == "POST" and parts == ["api", "params", "suggest"]:
             return {"suggestions": SERVICE.suggest_params(self._read_json())}
         if method == "POST" and parts == ["api", "params", "refine"]:
@@ -91,12 +129,12 @@ class Handler(BaseHTTPRequestHandler):
             project = SERVICE.get_project(parts[2])
             return {"reports": [to_plain(report) for report in project.audit_reports]}
         if method == "POST" and len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:5] == ["chapters", "generate"]:
-            project, job = SERVICE.generate_chapter(parts[2])
-            return {"project": to_plain(project), "job": to_plain(job)}
+            job = SERVICE.start_generate_chapter(parts[2])
+            return {"job_id": job.id, "job": to_plain(job)}
         if method == "POST" and len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:5] == ["chapters", "demo"]:
             count = int(query.get("count", ["3"])[0])
-            project, jobs = SERVICE.generate_demo(parts[2], count=count)
-            return {"project": to_plain(project), "jobs": [to_plain(job) for job in jobs]}
+            jobs = SERVICE.start_generate_demo(parts[2], count=count)
+            return {"job_ids": [j.id for j in jobs], "jobs": [to_plain(j) for j in jobs]}
         if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "revise":
             return {"project": to_plain(SERVICE.revise_latest_chapter(parts[2]))}
         if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "accept_warnings":
@@ -157,7 +195,9 @@ class Handler(BaseHTTPRequestHandler):
             "theme": project.meta.get("theme"),
             "scale": project.meta.get("scale"),
             "chapter_count": len(project.chapters),
+            "checkpoint_count": len(project.checkpoints),
             "latest_status": latest.overall_status if latest else None,
+            "created_at": project.created_at,
             "updated_at": project.updated_at,
         }
 
@@ -196,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_common_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
 
