@@ -215,7 +215,10 @@ class OpenAICompatibleProvider:
                         if token:
                             chunks.append(token)
                             if on_token is not None:
-                                on_token(token)
+                                try:
+                                    on_token(token)
+                                except Exception:
+                                    pass
                 text = strip_think_tags("".join(chunks))
                 return text, self._record(prompt, text, start, retries, usage)
             except (urllib.error.URLError, KeyError, TimeoutError) as exc:

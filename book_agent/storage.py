@@ -72,6 +72,21 @@ class JsonStore:
             raise ValueError(f"checkpoint hash mismatch: {checkpoint.id}")
         return self.migrate_checkpoint_payload(payload)
 
+    def load_settings(self) -> dict:
+        path = self.root / "settings.json"
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def save_settings(self, settings: dict) -> None:
+        path = self.root / "settings.json"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+
     @staticmethod
     def migrate_checkpoint_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload = dict(payload)

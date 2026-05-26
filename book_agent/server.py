@@ -105,6 +105,10 @@ class Handler(BaseHTTPRequestHandler):
             return {"config": SERVICE.llm_config()}
         if method == "POST" and parts == ["api", "llm", "reload"]:
             return {"config": SERVICE.reload_llm_config()}
+        if method == "GET" and parts == ["api", "settings"]:
+            return {"settings": SERVICE.get_settings()}
+        if method == "POST" and parts == ["api", "settings"]:
+            return {"settings": SERVICE.update_settings(self._read_json())}
         if method == "POST" and parts == ["api", "llm", "generate"]:
             return {"result": SERVICE.call_llm_text(self._read_json())}
         if method == "POST" and parts == ["api", "llm", "structured"]:
