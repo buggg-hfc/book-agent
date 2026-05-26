@@ -256,7 +256,11 @@ class BookAgentService:
         """Start chapter generation in background thread and return the job immediately."""
         job = self.jobs.start(project_id, "generate_chapter", "queued")
         self.jobs.publish_event(job.id, "step", "queued", 0.0)
-        self.jobs.submit(job.id, self._generate_chapter_worker, project_id, job)
+        try:
+            self.jobs.submit(job.id, self._generate_chapter_worker, project_id, job)
+        except Exception as exc:
+            self.jobs.fail(job, exc)
+            raise
         return job
 
     def _generate_chapter_worker(self, project_id: str, job: WritingJob) -> None:

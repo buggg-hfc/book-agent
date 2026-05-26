@@ -191,6 +191,7 @@ function App() {
   const [llmConfig, setLlmConfig] = React.useState<LlmConfig | null>(null);
   const [streamingJobId, setStreamingJobId] = React.useState<string | null>(null);
   const [streamEvents, setStreamEvents] = React.useState<JobEvent[]>([]);
+  const eventSourceRef = React.useRef<EventSource | null>(null);
   const [form, setForm] = React.useState({
     title: "镜中之罪",
     theme: "mystery",
@@ -289,6 +290,13 @@ function App() {
     });
   };
 
+  const closeEventSource = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  };
+
   const generateChapter = async () => {
     if (!selectedId) return;
     try {
@@ -298,27 +306,29 @@ function App() {
       );
       setBusy(null);
       const jobId = data.job_id;
+      closeEventSource();
       setStreamingJobId(jobId);
       setStreamEvents([]);
       const successMsg = project?.chapters.length ? "新章节已生成" : "第一章已生成";
       const source = new EventSource(`/api/jobs/${jobId}/stream`);
+      eventSourceRef.current = source;
       source.onmessage = (e) => {
         const evt: JobEvent = JSON.parse(e.data as string);
         setStreamEvents((prev) => [...prev, evt]);
         if (evt.event_type === "completed") {
-          source.close();
+          closeEventSource();
           setStreamingJobId(null);
           void loadProject(selectedId!);
           void refreshProjectListOnly(selectedId!);
           notify({ tone: "success", text: successMsg });
         } else if (evt.event_type === "failed") {
-          source.close();
+          closeEventSource();
           setStreamingJobId(null);
           notify({ tone: "danger", text: evt.detail || "生成失败" });
         }
       };
       source.onerror = () => {
-        source.close();
+        closeEventSource();
         setStreamingJobId(null);
         void loadProject(selectedId!);
         notify({ tone: "warning", text: "进度连接中断，请刷新查看结果" });
@@ -340,6 +350,10 @@ function App() {
   };
 
   const deleteProject = async (id: string, title: string) => {
+    if (streamingJobId !== null && selectedId === id) {
+      notify({ tone: "warning", text: "章节正在生成中，请等待完成后再删除" });
+      return;
+    }
     if (!window.confirm(`确定要删除项目「${title}」吗？此操作不可撤销，所有快照和数据将被永久删除。`)) return;
     await withBusy("删除项目", async () => {
       await api(`/api/projects/${id}`, { method: "DELETE" });
