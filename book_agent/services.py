@@ -68,6 +68,7 @@ class JobManager:
         progress: float,
         detail: str | None = None,
         llm_record: dict[str, Any] | None = None,
+        stream_tokens_out: int = 0,
     ) -> None:
         q = self._event_queues.get(job_id)
         if q is not None:
@@ -78,6 +79,7 @@ class JobManager:
                 progress=progress,
                 detail=detail,
                 llm_record=llm_record,
+                stream_tokens_out=stream_tokens_out,
             ))
 
     def drain_events(self, job_id: str) -> list[JobEvent]:
@@ -278,8 +280,11 @@ class BookAgentService:
             self.jobs.publish_event(job.id, "step", "writing chapter", 0.2)
             chapter = self.engine.write_chapter(project, build_default_context(project))
 
+            _token_count = [0]
+
             def _on_token(token: str) -> None:
-                self.jobs.publish_event(job.id, "token", "generating", 0.3, detail=token)
+                _token_count[0] += 1
+                self.jobs.publish_event(job.id, "token", "generating", 0.3, detail=token, stream_tokens_out=_token_count[0])
 
             llm_text, llm_record = self.provider.generate_text(
                 f"为《{project.meta.get('title')}》生成第{chapter_no}章，核心创意：{project.creation_params.get('core_idea')}",
