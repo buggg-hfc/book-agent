@@ -217,11 +217,12 @@ class WritingJob:
 @dataclass
 class JobEvent:
     job_id: str
-    event_type: str  # "step" | "completed" | "failed"
+    event_type: str  # "step" | "token" | "completed" | "failed"
     step: str
     progress: float
     detail: str | None = None
     llm_record: dict[str, Any] | None = None
+    stream_tokens_out: int = 0
 
 
 @dataclass

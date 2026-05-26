@@ -78,10 +78,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        deadline = _time.monotonic() + SERVICE.config.job_timeout_seconds + 30
-        while _time.monotonic() < deadline:
+        idle_timeout = SERVICE.config.job_timeout_seconds + 30
+        last_activity = _time.monotonic()
+        while _time.monotonic() - last_activity < idle_timeout:
             events = SERVICE.jobs.drain_events(job_id)
             for evt in events:
+                last_activity = _time.monotonic()
                 data = json.dumps(to_plain(evt), ensure_ascii=False)
                 try:
                     self.wfile.write(f"data: {data}\n\n".encode("utf-8"))

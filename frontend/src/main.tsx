@@ -64,6 +64,7 @@ type JobEvent = {
   progress: number;
   detail: string | null;
   llm_record: LlmCallRecord | null;
+  stream_tokens_out: number;
 };
 
 type Chapter = {
@@ -1265,6 +1266,7 @@ function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEven
   const progress = latest?.progress ?? 0;
   const stepLabel = latest?.step || "排队中";
   const llmRec = latest?.llm_record;
+  const streamTokens = latest?.stream_tokens_out ?? 0;
   return (
     <div className="stream-panel">
       <div className="stream-header">
@@ -1276,11 +1278,15 @@ function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEven
         <div className="stream-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
       </div>
       <div className="stream-step">{stepLabel} · {Math.round(progress * 100)}%</div>
-      {llmRec && (
+      {llmRec ? (
         <div className="stream-stats">
-          输入 {llmRec.prompt_tokens_estimate} / 输出 {llmRec.output_tokens_estimate} token · 耗时 {llmRec.latency_ms}ms
+          输入 {llmRec.prompt_tokens_estimate} / 输出 {llmRec.output_tokens_estimate} token · 耗时 {llmRec.latency_ms}ms{llmRec.cost_estimate > 0 ? ` · ¥${llmRec.cost_estimate.toFixed(4)}` : ""}
         </div>
-      )}
+      ) : streamTokens > 0 ? (
+        <div className="stream-stats">
+          已输出 {streamTokens} token…
+        </div>
+      ) : null}
     </div>
   );
 }
