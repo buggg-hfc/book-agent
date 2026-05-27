@@ -210,6 +210,7 @@ function App() {
   const [llmConfig, setLlmConfig] = React.useState<LlmConfig | null>(null);
   const [streamingJobId, setStreamingJobId] = React.useState<string | null>(null);
   const [streamEvents, setStreamEvents] = React.useState<JobEvent[]>([]);
+  const [streamText, setStreamText] = React.useState<string>("");
   const eventSourceRef = React.useRef<EventSource | null>(null);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [appSettings, setAppSettings] = React.useState<AppSettings | null>(null);
@@ -352,12 +353,16 @@ function App() {
       closeEventSource();
       setStreamingJobId(jobId);
       setStreamEvents([]);
+      setStreamText("");
       const successMsg = project?.chapters.length ? "新章节已生成" : "第一章已生成";
       const source = new EventSource(`/api/jobs/${jobId}/stream`);
       eventSourceRef.current = source;
       source.onmessage = (e) => {
         const evt: JobEvent = JSON.parse(e.data as string);
         setStreamEvents((prev) => [...prev, evt]);
+        if (evt.event_type === "token" && evt.detail) {
+          setStreamText((prev) => prev + evt.detail);
+        }
         if (evt.event_type === "completed") {
           closeEventSource();
           setStreamingJobId(null);
@@ -651,7 +656,7 @@ function App() {
             </section>
 
             {streamingJobId && (
-              <StreamProgressPanel jobId={streamingJobId} events={streamEvents} />
+              <StreamProgressPanel jobId={streamingJobId} events={streamEvents} streamText={streamText} />
             )}
 
             <nav className="tabs">
@@ -1261,12 +1266,20 @@ function SettingsModal({
   );
 }
 
-function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEvent[] }) {
+function StreamProgressPanel({ jobId, events, streamText }: { jobId: string; events: JobEvent[]; streamText: string }) {
   const latest = events[events.length - 1];
   const progress = latest?.progress ?? 0;
   const stepLabel = latest?.step || "排队中";
   const llmRec = latest?.llm_record;
   const streamTokens = latest?.stream_tokens_out ?? 0;
+  const previewRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (previewRef.current) {
+      previewRef.current.scrollTop = previewRef.current.scrollHeight;
+    }
+  }, [streamText]);
+
   return (
     <div className="stream-panel">
       <div className="stream-header">
@@ -1287,6 +1300,9 @@ function StreamProgressPanel({ jobId, events }: { jobId: string; events: JobEven
           已输出 {streamTokens} token…
         </div>
       ) : null}
+      {streamText && (
+        <div className="stream-text-preview" ref={previewRef}>{streamText}</div>
+      )}
     </div>
   );
 }
